@@ -1,0 +1,54 @@
+---
+title: "Redes"
+author:
+  - name: "Amaru Simón Agüero Jiménez"
+    email: "aaguero@miaundes.cl"
+    orcid: "0000-0001-7336-1833"
+date: "`r Sys.Date()`"
+lang: es
+format:
+  html:
+    smooth-scroll: true
+    toc: true
+    toc-depth: 6
+    toc-location: right
+    number-sections: true
+    number-depth: 6
+    code-fold: true
+    bibliography: ref.bib
+    csl: apa-numeric-superscript.csl
+    fig-cap-location: bottom
+#    css: styles.css
+execute:
+  python: true
+  warning: false
+  message: false
+  fig-width: 8
+  fig-height: 6
+---
+
+<img src="logo.png" style="width: 250px; position:absolute; top:0; left:0; padding:10px;"/>
+
+```{r}
+install_and_load <- function(package) {
+  if (!require(package, character.only = TRUE)) {
+    utils::install.packages(package)
+    library(package, character.only = TRUE)
+  }
+}
+
+packages <- c("tidyverse")
+
+invisible(capture.output(sapply(packages, install_and_load)))
+```
+
+
+```{r}
+data <- readRDS(paste0(gsub("/docs", "", getwd()), "/data/CONS_C1_2010_22.rds"))
+data <- data %>%
+  mutate(across(
+    .cols = where(is.character) & !any_of(c("HASH_KEY", "codigo_identificacion")),
+    .fns = as.factor
+  ))
+```
+
