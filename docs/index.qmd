@@ -1,0 +1,36 @@
+---
+title: "Tareas de Neurociencias."
+author: "Generación 2025 DCCS"
+date: "`r Sys.Date()`"
+lang: es
+format:
+  html:
+    smooth-scroll: true
+    toc: true
+    toc-depth: 6
+    toc-location: right
+    number-sections: true
+    number-depth: 6
+    code-fold: true
+    bibliography: ref.bib
+    csl: apa-numeric-superscript.csl
+    fig-cap-location: bottom
+#    css: styles.css
+execute:
+  python: true
+  warning: false
+  message: false
+  fig-width: 8
+  fig-height: 6
+---
+<img src="logo1.png" style="width: 250px; position:relative; top:0; left:0; padding:10px;"/>
+<img src="logo2.png" style="width: 400px; position:relative; top:0; right:0; padding:10px;"/>
+
+
+# Introducción, sobre el repositorio.
+
+Este repositorio contienen las tareas del ramo de Neurociencias del doctorado en Ciencias de la Complejidad Social, Universidad del Desarrollo, Chile.
+
+- [Tarea 1](https://amarusimonaguerojimenez.github.io/Neurociencia-DCCS/Tarea1.html).
+- [Tarea 2](https://amarusimonaguerojimenez.github.io/Neurociencia-DCCS/Tarea2.html).
+- [Trabajo final](https://amarusimonaguerojimenez.github.io/Neurociencia-DCCS/Tarea3.html).
