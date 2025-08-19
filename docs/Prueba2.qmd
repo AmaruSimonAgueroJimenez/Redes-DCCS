@@ -1,0 +1,1063 @@
+---
+title: "Redes"
+author:
+  - name: "Amaru Simón Agüero Jiménez"
+    email: "aaguero@miaundes.cl"
+    orcid: "0000-0001-7336-1833"
+date: "`r Sys.Date()`"
+lang: es
+format:
+  html:
+    smooth-scroll: true
+    toc: true
+    toc-depth: 6
+    toc-location: right
+    number-sections: true
+    number-depth: 6
+    code-fold: true
+    bibliography: ref.bib
+    csl: apa-numeric-superscript.csl
+    fig-cap-location: bottom
+#    css: styles.css
+execute:
+  python: true
+  warning: false
+  message: false
+  fig-width: 8
+  fig-height: 6
+---
+
+<img src="logo.png" style="width: 250px; position:absolute; top:0; left:0; padding:10px;"/>
+
+```{r}
+# ==============================================================================
+# SCRIPT DE LIMPIEZA Y HOMOGENEIZACIÓN DE DATOS PSIQUIÁTRICOS
+# Versión 2.0 - Sin agregaciones automáticas, preservando granularidad
+# ==============================================================================
+
+# --- 1. CONFIGURACIÓN INICIAL ------------------------------------------------
+# Parámetro para controlar si se aplican agrupaciones
+APPLY_GROUPING <- FALSE  # Cambiar a TRUE solo si se desean agregaciones
+
+# --- 2. CARGA DE LIBRERÍAS ---------------------------------------------------
+install_and_load <- function(package) {
+  if (!require(package, character.only = TRUE)) {
+    utils::install.packages(package)
+    library(package, character.only = TRUE)
+  }
+}
+
+packages <- c("tidyverse", "igraph", "qgraph", "bootnet", "NetworkComparisonTest", 
+              "huge", "visNetwork", "data.table", "glasso", "Matrix", "lubridate", 
+              "stringi")
+
+invisible(capture.output(sapply(packages, install_and_load)))
+
+# --- 3. LECTURA DE DATOS ------------------------------------------------------
+data <- readRDS(paste0(gsub("/docs", "", getwd()), "/data/CONS_C1_2010_22.rds"))
+
+# Crear copia de respaldo
+data_original <- data
+
+# --- 4. DEFINICIÓN DE COLUMNAS -----------------------------------------------
+cols_dsm  <- c(
+  "diagnostico_trs_psiquiatrico_dsm_iv",
+  "diagnostico_trs_psiquiatrico_sub_dsm_iv",
+  "x2_diagnostico_trs_psiquiatrico_dsm_iv",
+  "x3_diagnostico_trs_psiquiatrico_dsm_iv"
+)
+
+cols_cie  <- c(
+  "diagnostico_trs_psiquiatrico_cie_10",
+  "diagnostico_trs_psiquiatrico_sub_cie_10",
+  "x2_diagnostico_trs_psiquiatrico_cie_10",
+  "x3_diagnostico_trs_psiquiatrico_cie_10"
+)
+
+cols_sust <- c(
+  "sustancia_principal",
+  "otras_sustancias_no1",
+  "otras_sustancias_no2",
+  "otras_sustancias_no3"
+)
+
+# --- 5. FUNCIONES DE NORMALIZACIÓN Y CAPITALIZACIÓN --------------------------
+
+# Función mejorada de capitalización: solo primera letra en mayúscula
+capitalize_properly <- function(text) {
+  if (is.na(text) || text == "") return(NA_character_)  # IMPORTANTE: Preservar NA
+  
+  # Convertir todo a minúsculas primero
+  text <- tolower(text)
+  
+  # Lista de palabras que deben permanecer en minúsculas
+  lower_words <- c("de", "del", "la", "el", "los", "las", "y", "o", "en", 
+                   "a", "con", "sin", "por", "para", "desde", "hasta")
+  
+  # Dividir por espacios
+  words <- str_split(text, "\\s+")[[1]]
+  
+  # Capitalizar cada palabra apropiadamente
+  for (i in seq_along(words)) {
+    word <- words[i]
+    
+    # Primera palabra siempre capitalizada
+    if (i == 1) {
+      words[i] <- paste0(toupper(substring(word, 1, 1)), substring(word, 2))
+    }
+    # Palabras después de paréntesis o guiones
+    else if (i > 1 && str_detect(words[i-1], "[\\(\\-]$")) {
+      words[i] <- paste0(toupper(substring(word, 1, 1)), substring(word, 2))
+    }
+    # Palabras que empiezan con paréntesis
+    else if (str_detect(word, "^\\(")) {
+      words[i] <- paste0("(", toupper(substring(word, 2, 2)), substring(word, 3))
+    }
+    # Palabras en la lista de excepciones
+    else if (word %in% lower_words) {
+      words[i] <- word
+    }
+    # Resto de palabras
+    else {
+      words[i] <- paste0(toupper(substring(word, 1, 1)), substring(word, 2))
+    }
+  }
+  
+  paste(words, collapse = " ")
+}
+
+# Función vectorizada de capitalización
+capitalize_vector <- function(x) {
+  sapply(x, capitalize_properly, USE.NAMES = FALSE)
+}
+
+# Normalización de texto base - PRESERVANDO NA
+normalize_text <- function(x) {
+  # Preservar NA
+  na_mask <- is.na(x)
+  
+  x <- as.character(x)
+  x <- stri_trans_nfc(x)
+  x <- str_replace_all(x, fixed("\u0081"), "Á")
+  x <- str_replace_all(x, "[\u0092\u0093\u0094\u2018\u2019\u201C\u201D]", "'")
+  x <- str_replace_all(x, '\\"|"|"', "")
+  x <- str_squish(x)
+  x <- str_replace_all(x, " +:", ":")
+  
+  # Restaurar NA originales
+  x[na_mask] <- NA_character_
+  x
+}
+
+# --- 6. FUNCIONES DE LIMPIEZA ESPECÍFICAS (SIN AGREGACIÓN) ------------------
+
+# Limpieza DSM/CIE - Solo limpieza, sin agregación
+clean_dsm_cie <- function(x) {
+  # Preservar NA originales
+  na_mask <- is.na(x)
+  
+  x <- normalize_text(x)
+  x_lc <- str_to_lower(x)
+  
+  # Patrones que REALMENTE son valores faltantes (convertir a NA)
+  to_na <- c("^\\(na\\)$", "^na$", "^n/a$", "^\\.$", "^-$", "^$")
+  x[str_detect(x_lc, str_c(to_na, collapse="|"))] <- NA_character_
+  
+  # NO convertir "en estudio", "sin especificar" etc. a NA
+  # Estos son valores válidos que indican un estado específico
+  
+  # Correcciones ortográficas y de tildes
+  x <- str_replace_all(x, regex("\\bExtasis\\b", ignore_case=TRUE), "Éxtasis")
+  x <- str_replace_all(x, "Cocai ?na|Coca[ií]na", "Cocaína")
+  x <- str_replace_all(x, "Heroi ?na|Hero[ií]na", "Heroína")
+  x <- str_replace_all(x, "\\bTrs\\.?\\b", "Trastornos")
+  x <- str_replace_all(x, "^Trastornos\\.\\s+(del\\b)", "Trastornos \\1")
+  x <- str_trim(x)
+  
+  # Restaurar NA originales
+  x[na_mask] <- NA_character_
+  x
+}
+
+# Limpieza de sustancias - Solo limpieza, sin agregación
+clean_sustancias <- function(x) {
+  # Preservar NA originales
+  na_mask <- is.na(x)
+  
+  x <- normalize_text(x)
+  
+  # NO colapsar descripciones largas - mantener información completa
+  # Solo correcciones ortográficas
+  x <- str_replace_all(x, regex("\\bExtasis\\b", ignore_case=TRUE), "Éxtasis")
+  x <- str_replace_all(x, "Cocai ?na|Coca[ií]na", "Cocaína")
+  x <- str_replace_all(x, "Heroi ?na|Hero[ií]na", "Heroína")
+  
+  # Patrones que son verdaderos NA
+  x_lc <- str_to_lower(x)
+  na_patterns <- c("^\\(na\\)$", "^na$", "^n/a$", "^\\.$", "^-$", "^$")
+  x[str_detect(x_lc, str_c(na_patterns, collapse="|"))] <- NA_character_
+  
+  # NO convertir "sin consumo", "sin especificar" a NA
+  # Estos indican ausencia de consumo, no datos faltantes
+  
+  x <- str_trim(x)
+  
+  # Restaurar NA originales
+  x[na_mask] <- NA_character_
+  x
+}
+
+# Parche final de codificación
+fix_encoding_issues <- function(x) {
+  # Preservar NA
+  na_mask <- is.na(x)
+  
+  x <- as.character(x)
+  
+  # Corrección de glitches de tildes
+  x <- stringi::stri_replace_all_regex(x, "í.{0,1}a", "ía")
+  x <- stringi::stri_replace_all_regex(x, "í.{0,1}o", "ío")
+  x <- stringi::stri_replace_all_regex(x, "í.{0,1}e", "íe")
+  x <- stringi::stri_replace_all_regex(x, "í.{0,1}u", "íu")
+  
+  # Casos específicos
+  x <- str_replace_all(x, "íÁnimo", "Ánimo")
+  x <- str_replace_all(x, "Cocaí.na", "Cocaína")
+  x <- str_replace_all(x, "Heroí.na", "Heroína")
+  x <- str_replace_all(x, "hipomaní.co", "hipomaníaco")
+  x <- str_replace_all(x, "lí.mite", "límite")
+  x <- str_replace_all(x, "Sí.ndrome", "Síndrome")
+  x <- str_replace_all(x, "esquizotí.pico", "esquizotípico")
+  x <- str_replace_all(x, fixed("(afectivos)."), "(afectivos)")
+  
+  x <- str_squish(x)
+  
+  # Restaurar NA
+  x[na_mask] <- NA_character_
+  x
+}
+
+# --- 7. FUNCIONES DE AGRUPACIÓN OPCIONALES -----------------------------------
+# Estas funciones solo se aplicarán si APPLY_GROUPING = TRUE
+
+# Agrupación DSM-IV SUB (OPCIONAL)
+group_dsm_sub_optional <- function(x) {
+  if (!APPLY_GROUPING) return(x)  # Si no se activa agrupación, devolver sin cambios
+  
+  # Preservar NA
+  na_mask <- is.na(x)
+  x0 <- as.character(x)
+  
+  grouped <- case_when(
+    is.na(x0) ~ NA_character_,  # IMPORTANTE: Preservar NA explícitamente
+    
+    str_detect(x0, regex("esquizofreni|esquizoafectiv|esquizofreniforme|psic[oó]tic[oa]|delirant", ignore_case=TRUE)) ~ 
+      "Psicosis",
+    
+    str_detect(x0, regex("depresiv|bipolar|man[ií]ac|hipoman[ií]ac|estado del ?[áa]nimo", ignore_case=TRUE)) ~ 
+      "Trastornos del Estado de Ánimo",
+    
+    str_detect(x0, regex("ansiedad|agorafobia|fobia social|crisis de angustia|p[aá]nico", ignore_case=TRUE)) ~ 
+      "Trastornos de Ansiedad",
+    
+    str_detect(x0, regex("obsesivo-?compulsiv", ignore_case=TRUE)) ~ 
+      "TOC / Trastorno Obsesivo-Compulsivo",
+    
+    str_detect(x0, regex("personalidad", ignore_case=TRUE)) ~ 
+      "Trastornos de la Personalidad",
+    
+    TRUE ~ x0  # IMPORTANTE: Mantener valor original si no coincide
+  )
+  
+  # Restaurar NA originales
+  grouped[na_mask] <- NA_character_
+  
+  capitalize_vector(grouped)
+}
+
+# Agrupación CIE-10 SUB (OPCIONAL)
+group_cie_sub_optional <- function(x) {
+  if (!APPLY_GROUPING) return(x)
+  
+  na_mask <- is.na(x)
+  x0 <- as.character(x)
+  
+  grouped <- case_when(
+    is.na(x0) ~ NA_character_,
+    
+    str_detect(x0, regex("esquizofreni|esquizot[ií]pico|ideas delirantes|psic[oó]ticos no org[aá]nicos|psicosis", ignore_case=TRUE)) ~ 
+      "Esquizofrenia y Trastornos Delirantes",
+    
+    str_detect(x0, regex("humor \\(afectivos\\)|depresiv|bipolar|persistentes", ignore_case=TRUE)) ~ 
+      "Trastornos del Humor (Afectivos)",
+    
+    str_detect(x0, regex("neur[oó]ticos|ansiedad|estr[eé]s|adaptaci[oó]n|obsesivo-?compulsivo|somatomorf", ignore_case=TRUE)) ~ 
+      "Trastornos Neuróticos/Estresantes/Somatomorfos",
+    
+    TRUE ~ x0
+  )
+  
+  grouped[na_mask] <- NA_character_
+  capitalize_vector(grouped)
+}
+
+# Agrupación de sustancias (OPCIONAL)
+group_sust_optional <- function(x) {
+  if (!APPLY_GROUPING) return(x)
+  
+  na_mask <- is.na(x)
+  x0 <- as.character(x)
+  
+  grouped <- case_when(
+    is.na(x0) ~ NA_character_,
+    str_detect(x0, regex("^Alcohol$", ignore_case=TRUE)) ~ "Alcohol",
+    str_detect(x0, regex("^Marihuana$", ignore_case=TRUE)) ~ "Cannabis",
+    str_detect(x0, regex("Coca[ií]na|Crack|Pasta Base", ignore_case=TRUE)) ~ "Cocaína/Crack",
+    TRUE ~ x0
+  )
+  
+  grouped[na_mask] <- NA_character_
+  capitalize_vector(grouped)
+}
+
+# --- 8. PROCESAMIENTO PRINCIPAL ----------------------------------------------
+
+cat("\n", rep("=", 80), "\n", sep = "")
+cat("INICIANDO LIMPIEZA DE DATOS\n")
+cat("Modo de agrupación:", ifelse(APPLY_GROUPING, "ACTIVADO", "DESACTIVADO"), "\n")
+cat(rep("=", 80), "\n\n", sep = "")
+
+# Paso 1: Limpieza inicial (sin agregaciones)
+data <- data %>%
+  mutate(
+    # Limpiar columnas DSM
+    across(any_of(cols_dsm), clean_dsm_cie),
+    # Limpiar columnas CIE
+    across(any_of(cols_cie), clean_dsm_cie),
+    # Limpiar columnas de sustancias
+    across(any_of(cols_sust), clean_sustancias)
+  )
+
+# Paso 2: Aplicar parche de encoding
+data <- data %>%
+  mutate(
+    across(any_of(c(cols_dsm, cols_cie, cols_sust)), fix_encoding_issues)
+  )
+
+# Paso 3: Capitalización apropiada (sin agregación)
+data <- data %>%
+  mutate(
+    across(any_of(c(cols_dsm, cols_cie, cols_sust)), capitalize_vector)
+  )
+
+# Paso 4: OPCIONAL - Aplicar agrupaciones solo si está activado
+if (APPLY_GROUPING) {
+  cat("Aplicando agrupaciones...\n")
+  
+  # Crear columnas agrupadas con sufijo "_grouped"
+  data <- data %>%
+    mutate(
+      # DSM agrupado
+      diagnostico_trs_psiquiatrico_sub_dsm_iv_grouped = 
+        group_dsm_sub_optional(diagnostico_trs_psiquiatrico_sub_dsm_iv),
+      
+      # CIE agrupado
+      diagnostico_trs_psiquiatrico_sub_cie_10_grouped = 
+        group_cie_sub_optional(diagnostico_trs_psiquiatrico_sub_cie_10),
+      
+      # Sustancias agrupadas
+      sustancia_principal_grouped = group_sust_optional(sustancia_principal)
+    )
+} else {
+  cat("Preservando granularidad original de los datos.\n")
+}
+
+# Paso 5: Convertir a factor (excepto identificadores)
+# IMPORTANTE: Solo incluir niveles que NO son NA
+data <- data %>%
+  mutate(
+    across(
+      .cols = where(is.character) & !any_of(c("HASH_KEY", "codigo_identificacion")),
+      .fns = function(x) {
+        # Obtener niveles únicos excluyendo NA
+        unique_vals <- unique(x[!is.na(x)])
+        if (length(unique_vals) > 0) {
+          factor(x, levels = sort(unique_vals))
+        } else {
+          x  # Si solo hay NA, mantener como está
+        }
+      }
+    )
+  )
+
+# --- 9. VERIFICACIÓN DE RESULTADOS -------------------------------------------
+
+# Función mejorada para obtener resumen
+get_detailed_summary <- function(df, vars) {
+  faltantes <- setdiff(vars, names(df))
+  if (length(faltantes) > 0) {
+    warning("Variables no encontradas: ", paste(faltantes, collapse = ", "))
+    vars <- intersect(vars, names(df))
+  }
+  
+  summary_list <- list()
+  
+  for (v in vars) {
+    x <- df[[v]]
+    
+    # Obtener valores únicos (excluyendo NA)
+    if (is.factor(x)) {
+      levs <- levels(x)
+    } else {
+      levs <- sort(unique(x[!is.na(x)]))
+    }
+    
+    # Calcular frecuencias
+    freq_table <- table(x, useNA = "always")
+    freq_df <- as.data.frame(freq_table)
+    names(freq_df) <- c("Value", "Count")
+    freq_df$Percentage <- round(100 * freq_df$Count / sum(freq_df$Count), 2)
+    
+    # Información adicional
+    n_na <- sum(is.na(x))
+    n_unique <- length(levs)
+    
+    summary_list[[v]] <- list(
+      levels = levs,
+      n_unique = n_unique,
+      n_na = n_na,
+      n_total = length(x),
+      freq_table = freq_df[order(freq_df$Count, decreasing = TRUE), ]
+    )
+  }
+  
+  summary_list
+}
+
+# Verificar resultados
+all_vars <- c(cols_dsm, cols_cie, cols_sust)
+levels_summary <- get_detailed_summary(data, all_vars)
+
+# Mostrar resumen detallado
+cat("\n", rep("=", 80), "\n", sep = "")
+cat("RESUMEN DETALLADO DESPUÉS DE LA LIMPIEZA\n")
+cat(rep("=", 80), "\n\n", sep = "")
+
+for (v in names(levels_summary)) {
+  info <- levels_summary[[v]]
+  cat(sprintf("\n📊 %s:\n", v))
+  cat(sprintf("   - Valores únicos (sin NA): %d\n", info$n_unique))
+  cat(sprintf("   - Valores NA: %d (%.1f%%)\n", 
+              info$n_na, 100 * info$n_na / info$n_total))
+  cat(sprintf("   - Total de registros: %d\n", info$n_total))
+  
+  # Mostrar top 5 valores más frecuentes
+  cat("   - Top 5 valores más frecuentes:\n")
+  top5 <- head(info$freq_table[!is.na(info$freq_table$Value), ], 5)
+  if (nrow(top5) > 0) {
+    for (i in 1:nrow(top5)) {
+      cat(sprintf("     %d. %s: %d (%.1f%%)\n", 
+                  i, 
+                  as.character(top5$Value[i]), 
+                  top5$Count[i], 
+                  top5$Percentage[i]))
+    }
+  }
+  
+  if (info$n_unique > 5) {
+    cat(sprintf("     ... y %d valores más\n", info$n_unique - 5))
+  }
+}
+
+# --- 10. VALIDACIÓN DE INTEGRIDAD --------------------------------------------
+
+cat("\n", rep("=", 80), "\n", sep = "")
+cat("VALIDACIÓN DE INTEGRIDAD DE DATOS\n")
+cat(rep("=", 80), "\n\n", sep = "")
+
+# Verificar que no se crearon categorías espurias para NA
+for (col in all_vars) {
+  if (col %in% names(data)) {
+    x <- data[[col]]
+    
+    # Buscar posibles categorías que podrían ser NA mal manejados
+    suspicious_values <- c("Otros/No Clasificado", "Otros", "No Clasificado", 
+                          "Sin Especificar", "En Estudio")
+    
+    if (is.factor(x)) {
+      found_suspicious <- intersect(levels(x), suspicious_values)
+    } else {
+      found_suspicious <- intersect(unique(x), suspicious_values)
+    }
+    
+    if (length(found_suspicious) > 0) {
+      cat(sprintf("⚠️  %s contiene valores que podrían ser NA mal clasificados:\n", col))
+      for (val in found_suspicious) {
+        count <- sum(x == val, na.rm = TRUE)
+        cat(sprintf("    - '%s': %d casos\n", val, count))
+      }
+    }
+  }
+}
+
+# Comparar cantidad de NA antes y después
+cat("\n📈 Comparación de valores NA (original vs limpio):\n")
+for (col in all_vars) {
+  if (col %in% names(data_original) && col %in% names(data)) {
+    na_original <- sum(is.na(data_original[[col]]))
+    na_clean <- sum(is.na(data[[col]]))
+    diff <- na_clean - na_original
+    
+    if (diff != 0) {
+      cat(sprintf("   %s: %d → %d (%+d)\n", col, na_original, na_clean, diff))
+    }
+  }
+}
+
+# --- 11. GUARDAR RESULTADOS --------------------------------------------------
+
+# Guardar datos limpios
+saveRDS(data, paste0(gsub("/docs", "", getwd()), "/data/CONS_C1_2010_22_CLEAN.rds"))
+
+# Crear reporte de limpieza
+report <- list(
+  date = Sys.Date(),
+  grouping_applied = APPLY_GROUPING,
+  columns_processed = list(
+    dsm = cols_dsm,
+    cie = cols_cie,
+    sustancias = cols_sust
+  ),
+  summary = levels_summary
+)
+
+saveRDS(report, paste0(gsub("/docs", "", getwd()), "/data/cleaning_report.rds"))
+
+cat("\n", rep("=", 80), "\n", sep = "")
+cat("✅ PROCESAMIENTO COMPLETADO\n")
+cat("📁 Archivo guardado: CONS_C1_2010_22_CLEAN.rds\n")
+cat("📊 Reporte guardado: cleaning_report.rds\n")
+cat(rep("=", 80), "\n", sep = "")
+```
+```{r}
+# ==============================================================================
+# ANÁLISIS DE REDES DE POLICONSUMO - VERSIÓN MEJORADA
+# ==============================================================================
+
+# --- 1. CONFIGURACIÓN Y CARGA DE LIBRERÍAS -----------------------------------
+library(tidyverse)
+library(igraph)
+library(visNetwork)
+library(ggraph)
+library(tidygraph)
+library(corrplot)
+library(RColorBrewer)
+
+# --- 2. CREAR ESTRUCTURA DE CARPETAS -----------------------------------------
+# Crear carpeta principal para resultados
+output_dir <- paste0(gsub("/docs", "", getwd()), "/resultados_policonsumo")
+if (!dir.exists(output_dir)) {
+  dir.create(output_dir)
+  cat("📁 Carpeta creada:", output_dir, "\n")
+}
+
+# Crear subcarpetas
+subdirs <- c("visualizaciones", "datos", "reportes")
+for (subdir in subdirs) {
+  path <- file.path(output_dir, subdir)
+  if (!dir.exists(path)) {
+    dir.create(path)
+  }
+}
+
+cat("\n📂 Estructura de carpetas creada:\n")
+cat("   resultados_policonsumo/\n")
+cat("   ├── visualizaciones/\n")
+cat("   ├── datos/\n")
+cat("   └── reportes/\n\n")
+
+# --- 3. LECTURA Y LIMPIEZA DE DATOS ------------------------------------------
+data <- readRDS(paste0(gsub("/docs", "", getwd()), "/data/CONS_C1_2010_22_CLEAN.rds"))
+
+cols_sustancias <- c("sustancia_principal", "otras_sustancias_no1", 
+                     "otras_sustancias_no2", "otras_sustancias_no3")
+
+
+
+# Función de simplificación mejorada (ACTUALIZADA)
+simplify_substance_names <- function(x) {
+  x <- as.character(x)
+  
+  # ELIMINAR valores que empiezan con "Sin"
+  x[str_detect(x, "^Sin ")] <- NA
+  
+  # Simplificar nombres largos
+  x <- str_replace(x, "^Sedantes:.*", "Sedantes/Benzodiacepinas")
+  x <- str_replace(x, "^Hipnóticos:.*", "Hipnóticos")
+  x <- str_replace(x, "^Inhalables:.*", "Inhalables")
+  x <- str_replace(x, "^Otros Opioides.*", "Opioides")
+  x <- str_replace(x, "^Otros Estimulantes.*", "Estimulantes")
+  x <- str_replace(x, "^Otros Alucinógenos.*", "Alucinógenos")
+  x <- str_replace(x, "^Éxtasis.*", "Éxtasis/MDMA")
+  
+  return(x)
+}
+
+# Volver a aplicar la limpieza con los nuevos nombres
+data_network <- data %>%
+  select(all_of(cols_sustancias)) %>%
+  mutate(across(everything(), simplify_substance_names))
+
+# Eliminar casos sin sustancia principal válida
+data_network <- data_network %>%
+  filter(!is.na(sustancia_principal))
+
+# Eliminar casos sin sustancia principal válida
+data_network <- data_network %>%
+  filter(!is.na(sustancia_principal))
+
+cat("📊 Datos después de limpieza:\n")
+cat(sprintf("   - Casos totales: %d\n", nrow(data_network)))
+cat(sprintf("   - Sustancias únicas: %d\n", 
+            length(unique(unlist(data_network[!is.na(data_network)])))))
+
+# --- 4. ANÁLISIS EXPLORATORIO -------------------------------------------------
+cat("\n", rep("=", 80), "\n", sep = "")
+cat("ANÁLISIS EXPLORATORIO DE POLICONSUMO\n")
+cat(rep("=", 80), "\n\n", sep = "")
+
+count_combinations <- function(df) {
+  df %>%
+    mutate(
+      n_sustancias = rowSums(!is.na(select(., all_of(cols_sustancias))))
+    ) %>%
+    group_by(n_sustancias) %>%
+    summarise(
+      frecuencia = n(),
+      porcentaje = round(100 * n() / nrow(df), 2)
+    ) %>%
+    arrange(n_sustancias)
+}
+
+combo_stats <- count_combinations(data_network)
+print(combo_stats)
+
+# --- 5. CREACIÓN DE MATRIZ DE CO-OCURRENCIA ----------------------------------
+create_cooccurrence_matrix <- function(df) {
+  all_substances <- unique(unlist(df[cols_sustancias]))
+  all_substances <- all_substances[!is.na(all_substances)]
+  all_substances <- sort(all_substances)
+  
+  n_sust <- length(all_substances)
+  co_matrix <- matrix(0, nrow = n_sust, ncol = n_sust,
+                     dimnames = list(all_substances, all_substances))
+  
+  pb <- txtProgressBar(min = 0, max = nrow(df), style = 3)
+  
+  for (i in 1:nrow(df)) {
+    row_substances <- unlist(df[i, cols_sustancias])
+    row_substances <- row_substances[!is.na(row_substances)]
+    
+    if (length(row_substances) > 1) {
+      for (j in 1:(length(row_substances)-1)) {
+        for (k in (j+1):length(row_substances)) {
+          sust1 <- row_substances[j]
+          sust2 <- row_substances[k]
+          
+          co_matrix[sust1, sust2] <- co_matrix[sust1, sust2] + 1
+          co_matrix[sust2, sust1] <- co_matrix[sust2, sust1] + 1
+        }
+      }
+    }
+    setTxtProgressBar(pb, i)
+  }
+  close(pb)
+  
+  return(co_matrix)
+}
+
+cat("\n📊 Creando matriz de co-ocurrencia...\n")
+co_matrix <- create_cooccurrence_matrix(data_network)
+
+# --- 6. CREACIÓN DEL GRAFO CON MEJOR ESTRUCTURA ------------------------------
+# Crear grafo con umbral más alto para mayor claridad
+g <- graph_from_adjacency_matrix(
+  co_matrix,
+  mode = "undirected",
+  weighted = TRUE,
+  diag = FALSE
+)
+
+# Filtrar edges con peso mínimo (ajustado para mejor visualización)
+min_weight <- 500  # Aumentado para reducir el ruido visual
+g <- delete_edges(g, E(g)[weight < min_weight])
+g <- delete_vertices(g, degree(g) == 0)
+
+cat(sprintf("\n🔗 Red creada:\n"))
+cat(sprintf("   - Nodos: %d\n", vcount(g)))
+cat(sprintf("   - Enlaces: %d\n", ecount(g)))
+cat(sprintf("   - Umbral mínimo: %d co-ocurrencias\n", min_weight))
+
+# --- 7. MÉTRICAS DE CENTRALIDAD -----------------------------------------------
+metrics <- data.frame(
+  sustancia = V(g)$name,
+  grado = degree(g),
+  fuerza = strength(g),
+  intermediacion = betweenness(g),
+  cercania = closeness(g),
+  eigenvector = eigen_centrality(g)$vector
+) %>%
+  arrange(desc(fuerza))
+
+cat("\n", rep("=", 80), "\n", sep = "")
+cat("TOP 5 SUSTANCIAS POR CENTRALIDAD\n")
+cat(rep("=", 80), "\n", sep = "")
+print(head(metrics, 5))
+
+# --- 8. DETECCIÓN DE COMUNIDADES ---------------------------------------------
+communities <- cluster_louvain(g)
+V(g)$community <- membership(communities)
+
+# --- 9. VISUALIZACIÓN INTERACTIVA MEJORADA -----------------------------------
+cat("\n📈 Generando visualizaciones mejoradas...\n")
+
+# Calcular layout con mejor separación
+set.seed(123)
+coords <- layout_with_fr(g, weights = E(g)$weight)
+
+# Escalar coordenadas para mejor separación
+coords <- coords * 150
+
+# Preparar datos para visNetwork
+nodes <- data.frame(
+  id = V(g)$name,
+  label = V(g)$name,
+  value = sqrt(strength(g)),  # Raíz cuadrada para reducir diferencias extremas
+  group = V(g)$community,
+  x = coords[,1],
+  y = coords[,2],
+  title = paste0(
+    "<b>", V(g)$name, "</b><br>",
+    "Fuerza: ", format(round(strength(g), 0), big.mark = ","), "<br>",
+    "Conexiones: ", degree(g), "<br>",
+    "Comunidad: ", V(g)$community
+  ),
+  font.size = ifelse(strength(g) > quantile(strength(g), 0.75), 20, 14),
+  physics = FALSE  # Desactivar física para nodos principales
+)
+
+# Identificar nodos principales  
+top_nodes <- head(metrics$sustancia, 4)
+nodes$fixed.x <- TRUE
+nodes$fixed.y <- TRUE
+nodes$fixed.x[!(nodes$id %in% top_nodes)] <- FALSE
+nodes$fixed.y[!(nodes$id %in% top_nodes)] <- FALSE
+
+# Ajustar posiciones de nodos principales para mejor separación
+if ("Alcohol" %in% nodes$id) {
+  nodes[nodes$id == "Alcohol", c("x", "y")] <- c(-200, 0)
+}
+if ("Marihuana" %in% nodes$id) {
+  nodes[nodes$id == "Marihuana", c("x", "y")] <- c(200, 0)
+}
+if ("Pasta Base" %in% nodes$id) {
+  nodes[nodes$id == "Pasta Base", c("x", "y")] <- c(0, 200)
+}
+if ("Cocaína" %in% nodes$id) {
+  nodes[nodes$id == "Cocaína", c("x", "y")] <- c(0, -200)
+}
+# Ajustar posiciones de nodos principales para mejor separación
+if ("Alcohol" %in% nodes$id) {
+  nodes[nodes$id == "Alcohol", c("x", "y")] <- c(-200, 0)
+}
+if ("Marihuana" %in% nodes$id) {
+  nodes[nodes$id == "Marihuana", c("x", "y")] <- c(200, 0)
+}
+if ("Pasta Base" %in% nodes$id) {
+  nodes[nodes$id == "Pasta Base", c("x", "y")] <- c(0, 200)
+}
+if ("Cocaína" %in% nodes$id) {
+  nodes[nodes$id == "Cocaína", c("x", "y")] <- c(0, -200)
+}
+
+# Edges con mejor formato
+edges_df <- as_data_frame(g, what = "edges")
+edges <- data.frame(
+  from = edges_df$from,
+  to = edges_df$to,
+  value = edges_df$weight / 1000,  # Escalar para visualización
+  title = paste0(
+    edges_df$from, " ↔ ", edges_df$to, "<br>",
+    "Co-ocurrencias: ", format(edges_df$weight, big.mark = ",")
+  ),
+  color = list(
+    color = "rgba(150,150,150,0.3)",
+    highlight = "rgba(255,100,100,0.8)"
+  )
+)
+
+# Crear visualización interactiva mejorada
+vis_network <- visNetwork(nodes, edges, height = "800px", width = "100%") %>%
+  visOptions(
+    highlightNearest = list(
+      enabled = TRUE,
+      hover = TRUE,
+      degree = 1,
+      labelOnly = FALSE
+    ),
+    nodesIdSelection = list(
+      enabled = TRUE,
+      style = 'width: 200px; height: 30px;'
+    ),
+    selectedBy = list(
+      variable = "group",
+      style = 'width: 200px; height: 30px;'
+    )
+  ) %>%
+  visPhysics(
+    enabled = TRUE,
+    stabilization = list(
+      enabled = TRUE,
+      iterations = 500
+    ),
+    barnesHut = list(
+      gravitationalConstant = -8000,
+      springConstant = 0.001,
+      springLength = 200
+    )
+  ) %>%
+  visLayout(
+    randomSeed = 123,
+    improvedLayout = TRUE
+  ) %>%
+  visInteraction(
+    navigationButtons = TRUE,
+    dragNodes = TRUE,
+    dragView = TRUE,
+    zoomView = TRUE,
+    hover = TRUE,
+    tooltipDelay = 0
+  ) %>%
+  visEdges(
+    smooth = list(
+      enabled = TRUE,
+      type = "continuous"
+    )
+  ) %>%
+  visNodes(
+    shape = "dot",
+    scaling = list(
+      min = 10,
+      max = 50
+    )
+  ) %>%
+  visLegend(
+    enabled = TRUE,
+    position = "right",
+    width = 0.15
+  )
+
+# Guardar
+visSave(vis_network, 
+        file = file.path(output_dir, "visualizaciones", "red_policonsumo_interactiva.html"))
+cat("✅ Red interactiva guardada\n")
+
+# --- 10. VISUALIZACIÓN ESTÁTICA MEJORADA -------------------------------------
+# Usar layout force-directed con mejor separación
+g_tidy <- as_tbl_graph(g)
+
+p_network <- ggraph(g_tidy, layout = 'fr', weights = weight) + 
+  # Edges con transparencia basada en peso
+  geom_edge_link(
+    aes(width = weight, alpha = weight),
+    color = "gray40",
+    show.legend = FALSE
+  ) +
+  # Nodos con tamaño basado en centralidad
+  geom_node_point(
+    aes(size = strength(g), color = factor(V(g)$community)),
+    alpha = 0.9
+  ) +
+  # Etiquetas con repulsión para evitar superposición
+  geom_node_text(
+    aes(label = name, size = strength(g)/5000),
+    repel = TRUE,
+    force = 5,
+    segment.size = 0.2,
+    segment.alpha = 0.5,
+    box.padding = 0.5,
+    point.padding = 0.3,
+    show.legend = FALSE
+  ) +
+  # Escalas mejoradas
+  scale_edge_width_continuous(range = c(0.2, 4)) +
+  scale_edge_alpha_continuous(range = c(0.2, 0.8)) +
+  scale_size_continuous(
+    range = c(4, 20),
+    name = "Fuerza de\nconexiones",
+    labels = scales::comma
+  ) +
+  scale_color_brewer(
+    palette = "Set1",
+    name = "Comunidad"
+  ) +
+  # Tema y títulos
+  labs(
+    title = "Red de Policonsumo de Sustancias",
+    subtitle = sprintf("Basado en %s casos | Mínimo %s co-ocurrencias mostradas",
+                      format(nrow(data_network), big.mark = ","),
+                      format(min_weight, big.mark = ",")),
+    caption = paste("Fecha:", Sys.Date())
+  ) +
+  theme_void() +
+  theme(
+    plot.title = element_text(size = 18, face = "bold", hjust = 0.5),
+    plot.subtitle = element_text(size = 12, hjust = 0.5, margin = margin(b = 10)),
+    plot.caption = element_text(size = 10, hjust = 1),
+    legend.position = "right",
+    legend.title = element_text(size = 11, face = "bold"),
+    plot.margin = margin(20, 20, 20, 20)
+  )
+
+# Guardar con alta resolución
+ggsave(
+  file.path(output_dir, "visualizaciones", "red_policonsumo_estatica.png"),
+  p_network,
+  width = 16,
+  height = 12,
+  dpi = 300
+)
+cat("✅ Red estática guardada\n")
+
+# --- 11. HEATMAP MEJORADO ----------------------------------------------------
+# Seleccionar top sustancias
+top_n <- min(12, nrow(co_matrix))
+top_substances <- names(sort(rowSums(co_matrix), decreasing = TRUE)[1:top_n])
+co_matrix_subset <- co_matrix[top_substances, top_substances]
+
+# Normalizar por fila (porcentajes)
+co_matrix_pct <- sweep(co_matrix_subset, 1, 
+                       pmax(rowSums(co_matrix_subset), 1), "/") * 100
+
+# Crear heatmap mejorado
+png(file.path(output_dir, "visualizaciones", "heatmap_policonsumo.png"),
+    width = 1400, height = 1200, res = 120)
+
+corrplot(
+  co_matrix_pct,
+  method = "color",
+  type = "full",
+  order = "hclust",
+  tl.col = "black",
+  tl.srt = 45,
+  tl.cex = 0.9,
+  col = colorRampPalette(c("white", "#FFF7BC", "#FEC44F", "#D95F0E", "#993404"))(50),
+  addCoef.col = "black",
+  number.cex = 0.8,
+  cl.cex = 0.9,
+  title = "Matriz de Co-ocurrencia de Sustancias (%)",
+  mar = c(0, 0, 2, 0),
+  is.corr = FALSE
+)
+
+dev.off()
+cat("✅ Heatmap guardado\n")
+
+# --- 12. ANÁLISIS DE PATRONES ------------------------------------------------
+cat("\n", rep("=", 80), "\n", sep = "")
+cat("PATRONES DE POLICONSUMO IDENTIFICADOS\n")
+cat(rep("=", 80), "\n", sep = "")
+
+# Tríadas más comunes
+identify_common_triads <- function(df) {
+  df %>%
+    filter(!is.na(sustancia_principal), 
+           !is.na(otras_sustancias_no1), 
+           !is.na(otras_sustancias_no2)) %>%
+    select(sustancia_principal, otras_sustancias_no1, otras_sustancias_no2) %>%
+    rowwise() %>%
+    mutate(
+      triad = paste(sort(c(sustancia_principal, otras_sustancias_no1, 
+                          otras_sustancias_no2)), collapse = " + ")
+    ) %>%
+    ungroup() %>%
+    count(triad, sort = TRUE) %>%
+    head(10)
+}
+
+triads <- identify_common_triads(data_network)
+cat("\n📊 Top 10 tríadas más comunes:\n")
+for (i in 1:min(nrow(triads), 10)) {
+  cat(sprintf("   %2d. %s: %s casos\n", 
+              i, triads$triad[i], 
+              format(triads$n[i], big.mark = ",")))
+}
+
+# --- 13. GUARDAR TODOS LOS RESULTADOS ----------------------------------------
+cat("\n📁 Guardando archivos de datos...\n")
+
+# Métricas
+write.csv(metrics, 
+          file.path(output_dir, "datos", "metricas_centralidad.csv"),
+          row.names = FALSE)
+
+# Matriz de co-ocurrencia
+write.csv(co_matrix,
+          file.path(output_dir, "datos", "matriz_coocurrencia.csv"))
+
+# Tríadas
+write.csv(triads,
+          file.path(output_dir, "datos", "triadas_comunes.csv"),
+          row.names = FALSE)
+
+# Estadísticas de combinaciones
+write.csv(combo_stats,
+          file.path(output_dir, "datos", "estadisticas_combinaciones.csv"),
+          row.names = FALSE)
+
+# Reporte completo
+report <- list(
+  fecha = Sys.Date(),
+  parametros = list(
+    n_casos_analizados = nrow(data_network),
+    umbral_minimo = min_weight,
+    n_nodos_red = vcount(g),
+    n_enlaces_red = ecount(g)
+  ),
+  estadisticas = combo_stats,
+  metricas = metrics,
+  comunidades = sizes(communities),
+  triadas = triads
+)
+
+saveRDS(report, 
+        file.path(output_dir, "reportes", "reporte_completo_policonsumo.rds"))
+
+# --- 14. RESUMEN FINAL --------------------------------------------------------
+cat("\n", rep("=", 80), "\n", sep = "")
+cat("✅ ANÁLISIS COMPLETADO EXITOSAMENTE\n")
+cat(rep("=", 80), "\n", sep = "")
+
+cat("\n📊 RESUMEN:\n")
+cat(sprintf("   - Casos analizados: %s\n", format(nrow(data_network), big.mark = ",")))
+cat(sprintf("   - Sustancias en la red: %d\n", vcount(g)))
+cat(sprintf("   - Conexiones significativas: %d\n", ecount(g)))
+cat(sprintf("   - Comunidades detectadas: %d\n", length(communities)))
+
+cat("\n📁 ARCHIVOS GENERADOS EN:", output_dir, "\n")
+cat("   📂 visualizaciones/\n")
+cat("      - red_policonsumo_interactiva.html\n")
+cat("      - red_policonsumo_estatica.png\n")
+cat("      - heatmap_policonsumo.png\n")
+cat("   📂 datos/\n")
+cat("      - metricas_centralidad.csv\n")
+cat("      - matriz_coocurrencia.csv\n")
+cat("      - triadas_comunes.csv\n")
+cat("      - estadisticas_combinaciones.csv\n")
+cat("   📂 reportes/\n")
+cat("      - reporte_completo_policonsumo.rds\n")
+
+cat("\n💡 Siguiente paso: Abrir 'red_policonsumo_interactiva.html' en el navegador\n")
+cat(rep("=", 80), "\n", sep = "")
+```
+

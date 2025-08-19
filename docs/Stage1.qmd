@@ -27,28 +27,811 @@ execute:
   fig-height: 6
 ---
 
-<img src="logo.png" style="width: 250px; position:absolute; top:0; left:0; padding:10px;"/>
+```{r setup}
+#| include: false
 
-```{r}
-install_and_load <- function(package) {
-  if (!require(package, character.only = TRUE)) {
-    utils::install.packages(package)
-    library(package, character.only = TRUE)
-  }
+# Cargar librerías necesarias
+library(tidyverse)
+library(igraph)
+library(ggraph)
+library(tidygraph)
+library(kableExtra)
+library(DT)
+library(plotly)
+library(visNetwork)
+library(corrplot)
+library(RColorBrewer)
+
+# Configuración global
+options(scipen = 999)
+theme_set(theme_minimal())
+
+# Cargar datos limpios
+data <- readRDS(paste0(gsub("/docs", "", getwd()), "/data/CONS_C1_2010_22_CLEAN.rds"))
+```
+
+# Introducción
+
+Este documento presenta un análisis comprehensivo de las redes de policonsumo de sustancias basado en datos del sistema de salud. El análisis utiliza teoría de grafos para identificar patrones de co-ocurrencia y relaciones entre diferentes sustancias consumidas por los pacientes.
+
+# Descripción de los Datos
+
+## Base de Datos Original
+
+```{r data-description}
+#| tbl-cap: "Características generales de la base de datos"
+
+# Información general del dataset
+info_data <- data.frame(
+  Característica = c("Total de registros",
+                     "Período de análisis",
+                     "Variables totales",
+                     "Variables de sustancias",
+                     "Variables de diagnóstico DSM-IV",
+                     "Variables de diagnóstico CIE-10"),
+  Valor = c(format(nrow(data), big.mark = ","),
+            "2010-2022",
+            as.character(ncol(data)),
+            "4",
+            "4",
+            "4")
+)
+
+info_data %>%
+  kable(format = "html", 
+        col.names = c("Característica", "Valor"),
+        align = c("l", "r")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE,
+                position = "left") %>%
+  column_spec(1, width = "300px", bold = TRUE) %>%
+  column_spec(2, width = "150px")
+```
+
+## Datos de Sustancias para Análisis de Red
+
+```{r sustancias-prep}
+# Preparar datos de sustancias
+cols_sustancias <- c("sustancia_principal", "otras_sustancias_no1", 
+                     "otras_sustancias_no2", "otras_sustancias_no3")
+
+# Función de simplificación
+simplify_substance_names <- function(x) {
+  x <- as.character(x)
+  x[str_detect(x, "^Sin ")] <- NA
+  x <- str_replace(x, "^Sedantes:.*", "Sedantes/Benzodiacepinas")
+  x <- str_replace(x, "^Hipnóticos:.*", "Hipnóticos")
+  x <- str_replace(x, "^Inhalables:.*", "Inhalables")
+  x <- str_replace(x, "^Otros Opioides.*", "Opioides")
+  x <- str_replace(x, "^Otros Estimulantes.*", "Estimulantes")
+  x <- str_replace(x, "^Otros Alucinógenos.*", "Alucinógenos")
+  x <- str_replace(x, "^Éxtasis.*", "Éxtasis/MDMA")
+  return(x)
 }
 
-packages <- c("tidyverse")
-
-invisible(capture.output(sapply(packages, install_and_load)))
+# Aplicar limpieza
+data_network <- data %>%
+  select(all_of(cols_sustancias)) %>%
+  mutate(across(everything(), simplify_substance_names)) %>%
+  filter(!is.na(sustancia_principal))
 ```
 
+```{r sustancias-table}
+#| tbl-cap: "Distribución de sustancias principales consumidas"
 
-```{r}
-data <- readRDS(paste0(gsub("/docs", "", getwd()), "/data/CONS_C1_2010_22.rds"))
-data <- data %>%
-  mutate(across(
-    .cols = where(is.character) & !any_of(c("HASH_KEY", "codigo_identificacion")),
-    .fns = as.factor
-  ))
+# Tabla de frecuencias de sustancia principal
+sust_principal <- data_network %>%
+  count(sustancia_principal, name = "Frecuencia") %>%
+  arrange(desc(Frecuencia)) %>%
+  mutate(Porcentaje = round(100 * Frecuencia / sum(Frecuencia), 1),
+         Acumulado = cumsum(Porcentaje)) %>%
+  head(15)
+
+sust_principal %>%
+  kable(format = "html",
+        col.names = c("Sustancia Principal", "Frecuencia", "Porcentaje (%)", "Acumulado (%)"),
+        align = c("l", "r", "r", "r")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE) %>%
+  column_spec(1, width = "250px") %>%
+  row_spec(1:3, bold = TRUE, background = "#f0f0f0")
 ```
 
+## Patrones de Policonsumo
+
+```{r policonsumo-patterns}
+#| tbl-cap: "Distribución del número de sustancias consumidas"
+
+# Contar combinaciones
+combo_stats <- data_network %>%
+  mutate(n_sustancias = rowSums(!is.na(select(., all_of(cols_sustancias))))) %>%
+  group_by(n_sustancias) %>%
+  summarise(
+    Casos = n(),
+    Porcentaje = round(100 * n() / nrow(data_network), 2)
+  ) %>%
+  arrange(n_sustancias)
+
+combo_stats %>%
+  kable(format = "html",
+        col.names = c("Número de Sustancias", "Casos", "Porcentaje (%)"),
+        align = c("c", "r", "r")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE,
+                position = "center") %>%
+  column_spec(1, bold = TRUE, width = "150px") %>%
+  add_header_above(c("Patrones de Policonsumo" = 3))
+```
+
+```{r policonsumo-plot}
+#| fig-cap: "Distribución del policonsumo de sustancias"
+#| fig-height: 5
+#| fig-width: 8
+
+ggplot(combo_stats, aes(x = factor(n_sustancias), y = Casos)) +
+  geom_col(fill = "steelblue", alpha = 0.8) +
+  geom_text(aes(label = paste0(Casos, "\n(", Porcentaje, "%)")),
+            vjust = -0.3, size = 3.5) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.1)),
+                     labels = scales::comma) +
+  labs(x = "Número de Sustancias Consumidas",
+       y = "Número de Casos",
+       title = "Distribución del Policonsumo",
+       subtitle = paste("N =", format(nrow(data_network), big.mark = ","))) +
+  theme_minimal() +
+  theme(plot.title = element_text(size = 14, face = "bold"),
+        plot.subtitle = element_text(size = 12, color = "gray40"),
+        axis.text = element_text(size = 11))
+```
+
+# Construcción de la Red
+
+## Matriz de Co-ocurrencia
+
+```{r cooccurrence-matrix}
+# Crear matriz de co-ocurrencia
+create_cooccurrence_matrix <- function(df) {
+  all_substances <- unique(unlist(df[cols_sustancias]))
+  all_substances <- all_substances[!is.na(all_substances)]
+  all_substances <- sort(all_substances)
+  
+  n_sust <- length(all_substances)
+  co_matrix <- matrix(0, nrow = n_sust, ncol = n_sust,
+                     dimnames = list(all_substances, all_substances))
+  
+  for (i in 1:nrow(df)) {
+    row_substances <- unlist(df[i, cols_sustancias])
+    row_substances <- row_substances[!is.na(row_substances)]
+    
+    if (length(row_substances) > 1) {
+      for (j in 1:(length(row_substances)-1)) {
+        for (k in (j+1):length(row_substances)) {
+          sust1 <- row_substances[j]
+          sust2 <- row_substances[k]
+          
+          co_matrix[sust1, sust2] <- co_matrix[sust1, sust2] + 1
+          co_matrix[sust2, sust1] <- co_matrix[sust2, sust1] + 1
+        }
+      }
+    }
+  }
+  
+  return(co_matrix)
+}
+
+co_matrix <- create_cooccurrence_matrix(data_network)
+```
+
+```{r cooccurrence-top}
+#| tbl-cap: "Top 10 pares de sustancias con mayor co-ocurrencia"
+
+# Extraer pares más frecuentes
+upper_tri <- upper.tri(co_matrix)
+pairs_df <- expand.grid(row = rownames(co_matrix), 
+                        col = colnames(co_matrix), 
+                        stringsAsFactors = FALSE)
+pairs_df$value <- as.vector(co_matrix)
+
+top_pairs <- pairs_df %>%
+  filter(as.vector(upper_tri)) %>%
+  arrange(desc(value)) %>%
+  head(10) %>%
+  mutate(Par = paste(row, "↔", col)) %>%
+  select(Par, value) %>%
+  rename(Coocurrencias = value)
+
+top_pairs %>%
+  kable(format = "html",
+        col.names = c("Par de Sustancias", "Co-ocurrencias"),
+        align = c("l", "r")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE) %>%
+  column_spec(1, width = "300px") %>%
+  column_spec(2, width = "150px", bold = TRUE)
+```
+
+## Estructura de la Red
+
+```{r network-creation}
+# Crear grafo
+g_full <- graph_from_adjacency_matrix(
+  co_matrix,
+  mode = "undirected",
+  weighted = TRUE,
+  diag = FALSE
+)
+
+# Aplicar umbral para visualización
+min_weight <- 500
+g <- delete_edges(g_full, E(g_full)[weight < min_weight])
+g <- delete_vertices(g, degree(g) == 0)
+
+# Detectar comunidades
+communities <- cluster_louvain(g)
+V(g)$community <- membership(communities)
+```
+
+```{r network-properties}
+#| tbl-cap: "Propiedades estructurales de la red"
+
+# Calcular propiedades
+network_props <- data.frame(
+  Propiedad = c("Número de nodos (vértices)",
+                "Número de enlaces (edges)",
+                "Densidad de la red",
+                "Diámetro",
+                "Distancia media",
+                "Coeficiente de clustering",
+                "Componentes conectados",
+                "Comunidades detectadas"),
+  Valor = c(vcount(g),
+            ecount(g),
+            round(edge_density(g), 4),
+            diameter(g, weights = NA),
+            round(mean_distance(g, weights = NA), 2),
+            round(transitivity(g, type = "global"), 3),
+            components(g)$no,
+            length(communities))
+)
+
+network_props %>%
+  kable(format = "html",
+        col.names = c("Propiedad de la Red", "Valor"),
+        align = c("l", "r")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE,
+                position = "left") %>%
+  column_spec(1, width = "300px", bold = TRUE) %>%
+  column_spec(2, width = "150px")
+```
+
+# Visualización de la Red
+
+## Red Estática
+
+```{r network-viz-static}
+#| fig-cap: "Red de co-ocurrencia de sustancias (umbral mínimo: 500 co-ocurrencias)"
+#| fig-height: 10
+#| fig-width: 12
+
+# Convertir a tidygraph
+g_tidy <- as_tbl_graph(g)
+
+# Calcular métricas para el tamaño
+node_metrics <- data.frame(
+  name = V(g)$name,
+  degree = degree(g),
+  strength = strength(g),
+  betweenness = betweenness(g),
+  community = V(g)$community
+)
+
+# Crear visualización mejorada
+set.seed(42)
+p_network <- ggraph(g_tidy, layout = 'fr', weights = weight) + 
+  geom_edge_link(aes(width = weight, alpha = weight),
+                 color = "gray40",
+                 show.legend = FALSE) +
+  geom_node_point(aes(size = strength(g), 
+                      color = factor(V(g)$community)),
+                  alpha = 0.9) +
+  geom_node_text(aes(label = name, 
+                     size = sqrt(strength(g))/50),
+                 repel = TRUE,
+                 force = 3,
+                 segment.size = 0.2,
+                 segment.alpha = 0.5,
+                 show.legend = FALSE) +
+  scale_edge_width_continuous(range = c(0.2, 3)) +
+  scale_edge_alpha_continuous(range = c(0.2, 0.7)) +
+  scale_size_continuous(range = c(3, 15),
+                       name = "Fuerza\n(suma de pesos)",
+                       labels = scales::comma) +
+  scale_color_brewer(palette = "Set1",
+                     name = "Comunidad") +
+  labs(title = "Red de Policonsumo de Sustancias",
+       subtitle = sprintf("Basado en %s casos | Mínimo %s co-ocurrencias",
+                         format(nrow(data_network), big.mark = ","),
+                         format(min_weight, big.mark = ","))) +
+  theme_void() +
+  theme(plot.title = element_text(size = 16, face = "bold", hjust = 0.5),
+        plot.subtitle = element_text(size = 12, hjust = 0.5),
+        legend.position = "right",
+        plot.margin = margin(20, 20, 20, 20))
+
+print(p_network)
+```
+
+## Red Interactiva
+
+```{r network-interactive}
+#| fig-cap: "Red interactiva de co-ocurrencia (explora con zoom y arrastre)"
+
+# Calcular layout con mejor separación
+set.seed(123)
+coords <- layout_with_fr(g, weights = E(g)$weight)
+coords <- coords * 150  # Escalar para mejor separación
+
+# Preparar datos para visNetwork
+nodes <- data.frame(
+  id = V(g)$name,
+  label = V(g)$name,
+  value = sqrt(strength(g)),  # Raíz cuadrada para reducir diferencias extremas
+  group = V(g)$community,
+  x = coords[,1],
+  y = coords[,2],
+  title = paste0(
+    "<b>", V(g)$name, "</b><br>",
+    "Fuerza: ", format(round(strength(g), 0), big.mark = ","), "<br>",
+    "Conexiones: ", degree(g), "<br>",
+    "Comunidad: ", V(g)$community
+  ),
+  font.size = ifelse(strength(g) > quantile(strength(g), 0.75), 20, 14),
+  physics = FALSE
+)
+
+# Identificar y fijar nodos principales
+top_nodes <- head(node_metrics$name[order(node_metrics$strength, decreasing = TRUE)], 4)
+nodes$fixed.x <- nodes$id %in% top_nodes
+nodes$fixed.y <- nodes$id %in% top_nodes
+
+# Ajustar posiciones de nodos principales para mejor separación
+if ("Alcohol" %in% nodes$id) {
+  nodes[nodes$id == "Alcohol", c("x", "y")] <- c(-200, 0)
+}
+if ("Marihuana" %in% nodes$id) {
+  nodes[nodes$id == "Marihuana", c("x", "y")] <- c(200, 0)
+}
+if ("Pasta Base" %in% nodes$id) {
+  nodes[nodes$id == "Pasta Base", c("x", "y")] <- c(0, 200)
+}
+if ("Cocaína" %in% nodes$id) {
+  nodes[nodes$id == "Cocaína", c("x", "y")] <- c(0, -200)
+}
+
+# Preparar edges
+edges_df <- as_data_frame(g, what = "edges")
+edges <- data.frame(
+  from = edges_df$from,
+  to = edges_df$to,
+  value = edges_df$weight / 1000,  # Escalar para visualización
+  title = paste0(
+    edges_df$from, " ↔ ", edges_df$to, "<br>",
+    "Co-ocurrencias: ", format(edges_df$weight, big.mark = ",")
+  ),
+  color = list(
+    color = "rgba(150,150,150,0.3)",
+    highlight = "rgba(255,100,100,0.8)"
+  )
+)
+
+# Crear visualización interactiva
+visNetwork(nodes, edges, height = "600px", width = "100%") %>%
+  visOptions(
+    highlightNearest = list(
+      enabled = TRUE,
+      hover = TRUE,
+      degree = 1,
+      labelOnly = FALSE
+    ),
+    nodesIdSelection = list(
+      enabled = TRUE,
+      style = 'width: 200px; height: 30px;'
+    ),
+    selectedBy = list(
+      variable = "group",
+      style = 'width: 200px; height: 30px;',
+      main = "Seleccionar Comunidad"
+    )
+  ) %>%
+  visPhysics(
+    enabled = TRUE,
+    stabilization = list(
+      enabled = TRUE,
+      iterations = 200
+    ),
+    barnesHut = list(
+      gravitationalConstant = -5000,
+      springConstant = 0.001,
+      springLength = 200,
+      damping = 0.3
+    )
+  ) %>%
+  visLayout(
+    randomSeed = 123,
+    improvedLayout = TRUE
+  ) %>%
+  visInteraction(
+    navigationButtons = TRUE,
+    dragNodes = TRUE,
+    dragView = TRUE,
+    zoomView = TRUE,
+    hover = TRUE,
+    tooltipDelay = 0
+  ) %>%
+  visEdges(
+    smooth = list(
+      enabled = TRUE,
+      type = "continuous",
+      roundness = 0.5
+    ),
+    width = 2,
+    physics = TRUE
+  ) %>%
+  visNodes(
+    shape = "dot",
+    scaling = list(
+      min = 10,
+      max = 40
+    ),
+    borderWidth = 2,
+    borderWidthSelected = 4
+  ) %>%
+  visLegend(
+    enabled = TRUE,
+    position = "right",
+    width = 0.15,
+    useGroups = TRUE,
+    main = "Comunidades"
+  ) %>%
+  visConfigure(enabled = FALSE)  # Desactivar menú de configuración
+```
+
+Red de Co-ocurrencia Ponderada No Dirigida.
+
+Clasificación Principal:
+
+-   Red de co-ocurrencia: Los enlaces representan la frecuencia con que dos sustancias aparecen juntas en el mismo paciente
+-   Red unimodal: Todos los nodos son del mismo tipo (sustancias)
+-   Red ponderada: Los edges tienen pesos que representan el número de co-ocurrencias
+-   Red no dirigida: La relación de co-consumo es simétrica (si A se consume con B, B se consume con A)
+
+# Análisis de Centralidad
+
+## Métricas de Centralidad
+
+```{r centrality-metrics}
+# Calcular todas las métricas de centralidad
+centrality_metrics <- data.frame(
+  Sustancia = V(g)$name,
+  Grado = degree(g),
+  Grado_Norm = round(degree(g, normalized = TRUE), 3),
+  Fuerza = round(strength(g), 0),
+  Intermediación = round(betweenness(g), 1),
+  Intermediación_Norm = round(betweenness(g, normalized = TRUE), 3),
+  Cercanía = round(closeness(g), 4),
+  Cercanía_Norm = round(closeness(g, normalized = TRUE), 3),
+  Eigenvector = round(eigen_centrality(g)$vector, 3),
+  Comunidad = V(g)$community
+) %>%
+  arrange(desc(Fuerza))
+```
+
+```{r centrality-table}
+#| tbl-cap: "Métricas de centralidad de las sustancias en la red"
+
+centrality_metrics %>%
+  head(10) %>%
+  select(Sustancia, Grado, Fuerza, Intermediación_Norm, 
+         Cercanía_Norm, Eigenvector, Comunidad) %>%
+  kable(format = "html",
+        col.names = c("Sustancia", "Grado", "Fuerza", "Intermediación", 
+                     "Cercanía", "Eigenvector", "Comunidad"),
+        align = c("l", rep("r", 6))) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE) %>%
+  column_spec(1, bold = TRUE, width = "150px")
+```
+
+## Comparación Visual de Centralidades
+
+```{r centrality-comparison}
+#| fig-cap: "Comparación de diferentes métricas de centralidad"
+#| fig-height: 8
+#| fig-width: 10
+
+# Preparar datos para visualización
+centrality_long <- centrality_metrics %>%
+  head(10) %>%
+  select(Sustancia, Grado_Norm, Intermediación_Norm, 
+         Cercanía_Norm, Eigenvector) %>%
+  pivot_longer(cols = -Sustancia,
+               names_to = "Métrica",
+               values_to = "Valor") %>%
+  mutate(Métrica = str_replace(Métrica, "_Norm", ""),
+         Métrica = factor(Métrica, 
+                         levels = c("Grado", "Intermediación", 
+                                   "Cercanía", "Eigenvector")))
+
+ggplot(centrality_long, aes(x = reorder(Sustancia, Valor), 
+                            y = Valor, 
+                            fill = Métrica)) +
+  geom_col(position = "dodge", alpha = 0.8) +
+  coord_flip() +
+  scale_fill_brewer(palette = "Set2") +
+  labs(x = NULL,
+       y = "Valor Normalizado",
+       title = "Comparación de Métricas de Centralidad",
+       subtitle = "Top 10 sustancias por fuerza de conexiones") +
+  theme_minimal() +
+  theme(plot.title = element_text(size = 14, face = "bold"),
+        legend.position = "bottom",
+        axis.text.y = element_text(size = 10))
+```
+
+# Análisis de Comunidades
+
+```{r community-analysis}
+#| tbl-cap: "Composición de las comunidades detectadas"
+
+# Análisis de comunidades
+community_analysis <- data.frame(
+  Sustancia = V(g)$name,
+  Comunidad = V(g)$community,
+  Fuerza = strength(g)
+) %>%
+  group_by(Comunidad) %>%
+  summarise(
+    Tamaño = n(),
+    Sustancias = paste(head(Sustancia[order(Fuerza, decreasing = TRUE)], 3), 
+                       collapse = ", "),
+    Fuerza_Total = sum(Fuerza),
+    Fuerza_Media = round(mean(Fuerza), 0)
+  ) %>%
+  arrange(desc(Tamaño))
+
+community_analysis %>%
+  kable(format = "html",
+        col.names = c("Comunidad", "Tamaño", "Principales Sustancias", 
+                     "Fuerza Total", "Fuerza Media"),
+        align = c("c", "r", "l", "r", "r")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE) %>%
+  column_spec(3, width = "300px")
+```
+
+## Visualización de Comunidades
+
+```{r community-viz}
+#| fig-cap: "Distribución de comunidades en la red"
+#| fig-height: 6
+#| fig-width: 10
+
+# Crear gráfico de barras apiladas por comunidad
+community_composition <- data.frame(
+  Sustancia = V(g)$name,
+  Comunidad = factor(V(g)$community),
+  Fuerza = strength(g)
+) %>%
+  arrange(Comunidad, desc(Fuerza))
+
+ggplot(community_composition, aes(x = Comunidad, y = Fuerza, fill = Sustancia)) +
+  geom_col(position = "stack", alpha = 0.8) +
+  scale_fill_manual(values = colorRampPalette(brewer.pal(12, "Set3"))(length(V(g)$name))) +
+  labs(x = "Comunidad",
+       y = "Fuerza Total de Conexiones",
+       title = "Composición de las Comunidades por Fuerza de Conexiones") +
+  theme_minimal() +
+  theme(plot.title = element_text(size = 14, face = "bold"),
+        legend.position = "right",
+        legend.text = element_text(size = 8))
+```
+
+# Patrones de Co-consumo
+
+## Tríadas Más Frecuentes
+
+```{r triads-analysis}
+#| tbl-cap: "Top 10 tríadas de sustancias más frecuentes"
+
+# Identificar tríadas comunes
+identify_triads <- function(df) {
+  df %>%
+    filter(!is.na(sustancia_principal), 
+           !is.na(otras_sustancias_no1), 
+           !is.na(otras_sustancias_no2)) %>%
+    rowwise() %>%
+    mutate(triad = paste(sort(c(sustancia_principal, 
+                                otras_sustancias_no1, 
+                                otras_sustancias_no2)), 
+                         collapse = " + ")) %>%
+    ungroup() %>%
+    count(triad, sort = TRUE) %>%
+    mutate(Porcentaje = round(100 * n / nrow(df), 2))
+}
+
+triads <- identify_triads(data_network) %>%
+  head(10)
+
+triads %>%
+  select(triad, n, Porcentaje) %>%
+  kable(format = "html",
+        col.names = c("Tríada de Sustancias", "Frecuencia", "Porcentaje (%)"),
+        align = c("l", "r", "r")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE) %>%
+  column_spec(1, width = "400px") %>%
+  row_spec(1:3, bold = TRUE, background = "#f0f0f0")
+```
+
+## Matriz de Calor
+
+```{r heatmap}
+#| fig-cap: "Matriz de co-ocurrencia de las sustancias más frecuentes"
+#| fig-height: 8
+#| fig-width: 10
+
+# Seleccionar top sustancias para el heatmap
+top_n <- min(15, nrow(co_matrix))
+top_substances <- names(sort(rowSums(co_matrix), decreasing = TRUE)[1:top_n])
+co_matrix_subset <- co_matrix[top_substances, top_substances]
+
+# Normalizar por fila
+co_matrix_norm <- sweep(co_matrix_subset, 1, 
+                       pmax(rowSums(co_matrix_subset), 1), "/") * 100
+
+# Convertir a formato largo para ggplot
+co_matrix_long <- as.data.frame(as.table(co_matrix_norm)) %>%
+  rename(Sustancia1 = Var1, Sustancia2 = Var2, Porcentaje = Freq)
+
+ggplot(co_matrix_long, aes(x = Sustancia1, y = Sustancia2, fill = Porcentaje)) +
+  geom_tile(color = "white", size = 0.5) +
+  geom_text(aes(label = round(Porcentaje, 0)), 
+            size = 3, color = "black") +
+  scale_fill_gradient2(low = "white", mid = "#FEC44F", high = "#D95F0E",
+                       midpoint = 50,
+                       name = "Co-ocurrencia\n(%)") +
+  labs(x = NULL, y = NULL,
+       title = "Matriz de Co-ocurrencia de Sustancias",
+       subtitle = "Porcentaje de co-ocurrencia respecto al total de cada sustancia") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 10),
+        axis.text.y = element_text(size = 10),
+        plot.title = element_text(size = 14, face = "bold"),
+        legend.position = "right") +
+  coord_fixed()
+```
+
+# Análisis de Distribución de Grado
+
+```{r degree-distribution}
+#| fig-cap: "Distribución del grado de los nodos en la red"
+#| fig-height: 6
+#| fig-width: 10
+
+# Calcular distribución de grado
+degree_dist <- data.frame(
+  Grado = degree(g_full)
+) %>%
+  count(Grado) %>%
+  mutate(Probabilidad = n / sum(n))
+
+# Crear visualización con escala log-log
+p1 <- ggplot(degree_dist, aes(x = Grado, y = n)) +
+  geom_point(size = 3, color = "steelblue") +
+  geom_line(alpha = 0.5) +
+  labs(x = "Grado (k)",
+       y = "Frecuencia",
+       title = "Distribución de Grado",
+       subtitle = "Escala lineal") +
+  theme_minimal()
+
+p2 <- ggplot(degree_dist[degree_dist$Grado > 0,], 
+             aes(x = Grado, y = Probabilidad)) +
+  geom_point(size = 3, color = "darkred") +
+  geom_smooth(method = "lm", se = FALSE, linetype = "dashed", 
+              color = "gray40", size = 0.5) +
+  scale_x_log10() +
+  scale_y_log10() +
+  labs(x = "log(Grado)",
+       y = "log(P(k))",
+       title = "Distribución de Grado",
+       subtitle = "Escala log-log") +
+  theme_minimal()
+
+library(patchwork)
+p1 + p2
+```
+
+# Medidas de Centralización
+
+```{r centralization}
+#| tbl-cap: "Medidas de centralización de la red"
+
+# Calcular medidas de centralización
+centralization_measures <- data.frame(
+  Medida = c("Centralización de Grado",
+             "Centralización de Cercanía",
+             "Centralización de Intermediación",
+             "Centralización de Eigenvector"),
+  Valor = c(round(centr_degree(g)$centralization, 4),
+            round(centr_clo(g)$centralization, 4),
+            round(centr_betw(g)$centralization, 4),
+            round(centr_eigen(g)$centralization, 4)),
+  Interpretación = c("Concentración de conexiones directas",
+                     "Concentración de accesibilidad",
+                     "Concentración de control de flujo",
+                     "Concentración de influencia")
+)
+
+centralization_measures %>%
+  kable(format = "html",
+        align = c("l", "r", "l")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE) %>%
+  column_spec(1, bold = TRUE, width = "250px") %>%
+  column_spec(2, width = "100px") %>%
+  column_spec(3, width = "300px", italic = TRUE)
+```
+
+# Conclusiones
+
+## Hallazgos Principales
+
+```{r key-findings}
+#| tbl-cap: "Resumen de hallazgos principales"
+
+# Identificar sustancias clave
+top_degree <- names(sort(degree(g), decreasing = TRUE)[1])
+top_between <- names(sort(betweenness(g), decreasing = TRUE)[1])
+top_eigen <- names(sort(eigen_centrality(g)$vector, decreasing = TRUE)[1])
+
+findings <- data.frame(
+  Aspecto = c("Sustancia más conectada",
+              "Sustancia puente principal",
+              "Sustancia más influyente",
+              "Porcentaje de policonsumo",
+              "Tamaño promedio de combinación",
+              "Patrón más común"),
+  Hallazgo = c(top_degree,
+               top_between,
+               top_eigen,
+               paste0(round(100 - combo_stats$Porcentaje[combo_stats$n_sustancias == 1], 1), "%"),
+               round(mean(data_network %>% 
+                           mutate(n = rowSums(!is.na(.))) %>% 
+                           pull(n)), 1),
+               triads$triad[1])
+)
+
+findings %>%
+  kable(format = "html",
+        col.names = c("Aspecto Analizado", "Hallazgo Principal"),
+        align = c("l", "l")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE) %>%
+  column_spec(1, bold = TRUE, width = "250px") %>%
+  column_spec(2, width = "300px")
+```
+
+## Implicaciones
+
+El análisis de redes revela patrones complejos de policonsumo con importantes implicaciones:
+
+1.  **Alta prevalencia de policonsumo**: La mayoría de los casos involucran múltiples sustancias
+2.  **Sustancias centrales**: Algunas sustancias actúan como nodos centrales en las redes de consumo
+3.  **Comunidades definidas**: Existen grupos claros de sustancias que tienden a consumirse juntas
+4.  **Patrones recurrentes**: Se identifican tríadas y combinaciones específicas que se repiten frecuentemente
+
+------------------------------------------------------------------------
+
+*Documento generado el `r format(Sys.Date(), "%d de %B de %Y")`*

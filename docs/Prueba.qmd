@@ -1,0 +1,4502 @@
+---
+title: "Redes"
+author:
+  - name: "Amaru Simón Agüero Jiménez"
+    email: "aaguero@miaundes.cl"
+    orcid: "0000-0001-7336-1833"
+date: "`r Sys.Date()`"
+lang: es
+format:
+  html:
+    smooth-scroll: true
+    toc: true
+    toc-depth: 6
+    toc-location: right
+    number-sections: true
+    number-depth: 6
+    code-fold: true
+    bibliography: ref.bib
+    csl: apa-numeric-superscript.csl
+    fig-cap-location: bottom
+#    css: styles.css
+execute:
+  python: true
+  warning: false
+  message: false
+  fig-width: 8
+  fig-height: 6
+---
+
+<img src="logo.png" style="width: 250px; position:absolute; top:0; left:0; padding:10px;"/>
+
+```{r}
+# ==============================================================================
+# SCRIPT DE LIMPIEZA Y HOMOGENEIZACIÓN DE DATOS PSIQUIÁTRICOS
+# ==============================================================================
+
+# --- 1. CARGA DE LIBRERÍAS ---------------------------------------------------
+install_and_load <- function(package) {
+  if (!require(package, character.only = TRUE)) {
+    utils::install.packages(package)
+    library(package, character.only = TRUE)
+  }
+}
+
+packages <- c("tidyverse", "igraph", "qgraph", "bootnet", "NetworkComparisonTest", 
+              "huge", "visNetwork", "data.table", "glasso", "Matrix", "lubridate", 
+              "stringi")
+
+invisible(capture.output(sapply(packages, install_and_load)))
+
+# --- 2. LECTURA DE DATOS ------------------------------------------------------
+data <- readRDS(paste0(gsub("/docs", "", getwd()), "/data/CONS_C1_2010_22.rds"))
+
+# --- 3. DEFINICIÓN DE COLUMNAS -----------------------------------------------
+cols_dsm  <- c(
+  "diagnostico_trs_psiquiatrico_dsm_iv",
+  "diagnostico_trs_psiquiatrico_sub_dsm_iv",
+  "x2_diagnostico_trs_psiquiatrico_dsm_iv",
+  "x3_diagnostico_trs_psiquiatrico_dsm_iv"
+)
+
+cols_cie  <- c(
+  "diagnostico_trs_psiquiatrico_cie_10",
+  "diagnostico_trs_psiquiatrico_sub_cie_10",
+  "x2_diagnostico_trs_psiquiatrico_cie_10",
+  "x3_diagnostico_trs_psiquiatrico_cie_10"
+)
+
+cols_sust <- c(
+  "sustancia_principal",
+  "otras_sustancias_no1",
+  "otras_sustancias_no2",
+  "otras_sustancias_no3"
+)
+
+# --- 4. FUNCIONES DE NORMALIZACIÓN Y CAPITALIZACIÓN --------------------------
+
+# Función mejorada de capitalización: solo primera letra en mayúscula
+capitalize_properly <- function(text) {
+  if (is.na(text) || text == "") return(text)
+  
+  # Convertir todo a minúsculas primero
+  text <- tolower(text)
+  
+  # Lista de palabras que deben permanecer en minúsculas (artículos, preposiciones)
+  lower_words <- c("de", "del", "la", "el", "los", "las", "y", "o", "en", 
+                   "a", "con", "sin", "por", "para", "desde", "hasta")
+  
+  # Dividir por espacios
+  words <- str_split(text, "\\s+")[[1]]
+  
+  # Capitalizar cada palabra apropiadamente
+  for (i in seq_along(words)) {
+    word <- words[i]
+    
+    # Primera palabra siempre capitalizada
+    if (i == 1) {
+      words[i] <- paste0(toupper(substring(word, 1, 1)), substring(word, 2))
+    }
+    # Palabras después de paréntesis o guiones
+    else if (i > 1 && str_detect(words[i-1], "[\\(\\-]$")) {
+      words[i] <- paste0(toupper(substring(word, 1, 1)), substring(word, 2))
+    }
+    # Palabras que empiezan con paréntesis
+    else if (str_detect(word, "^\\(")) {
+      words[i] <- paste0("(", toupper(substring(word, 2, 2)), substring(word, 3))
+    }
+    # Palabras en la lista de excepciones
+    else if (word %in% lower_words) {
+      words[i] <- word
+    }
+    # Resto de palabras
+    else {
+      words[i] <- paste0(toupper(substring(word, 1, 1)), substring(word, 2))
+    }
+  }
+  
+  paste(words, collapse = " ")
+}
+
+# Función vectorizada de capitalización
+capitalize_vector <- function(x) {
+  sapply(x, capitalize_properly, USE.NAMES = FALSE)
+}
+
+# Normalización de texto base
+normalize_text <- function(x) {
+  x <- as.character(x)
+  x <- stri_trans_nfc(x)
+  x <- str_replace_all(x, fixed("\u0081"), "Á")
+  x <- str_replace_all(x, "[\u0092\u0093\u0094\u2018\u2019\u201C\u201D]", "'")
+  x <- str_replace_all(x, '\\"|"|"', "")
+  x <- str_squish(x)
+  x <- str_replace_all(x, " +:", ":")
+  x
+}
+
+# --- 5. FUNCIONES DE LIMPIEZA ESPECÍFICAS ------------------------------------
+
+# Limpieza DSM/CIE
+clean_dsm_cie <- function(x) {
+  x <- normalize_text(x)
+  x_lc <- str_to_lower(x)
+  
+  # Patrones a convertir en NA
+  to_na <- c("^\\(na\\)$", "^en estudio$", "^sin especificar$",
+             "^sin sustancia principal \\(cip-crc\\)$", "^sin consumo$")
+  x[str_detect(x_lc, str_c(to_na, collapse="|"))] <- NA_character_
+  
+  # Correcciones de tildes y abreviaturas
+  x <- str_replace_all(x, regex("\\bExtasis\\b", ignore_case=TRUE), "Éxtasis")
+  x <- str_replace_all(x, "Cocai ?na|Coca[ií]na", "Cocaína")
+  x <- str_replace_all(x, "Heroi ?na|Hero[ií]na", "Heroína")
+  x <- str_replace_all(x, "\\bTrs\\.?\\b", "Trastornos")
+  x <- str_replace_all(x, "^Trastornos\\.\\s+(del\\b)", "Trastornos \\1")
+  x <- str_trim(x)
+  
+  x
+}
+
+# Limpieza de sustancias
+clean_sustancias <- function(x) {
+  x <- normalize_text(x)
+  
+  # Colapsar descripciones largas
+  x <- str_replace(x, "^Inhalables:.*", "Inhalables")
+  x <- str_replace(x, "^Sedantes:.*", "Sedantes")
+  x <- str_replace(x, "^Otros Opioides Analgésicos:.*", "Otros Opioides Analgésicos")
+  x <- str_replace_all(x, regex("^Tranquilizantes$", ignore_case=TRUE), "Sedantes")
+  
+  # Correcciones de tildes
+  x <- str_replace_all(x, regex("\\bExtasis\\b", ignore_case=TRUE), "Éxtasis")
+  x <- str_replace_all(x, "Cocai ?na|Coca[ií]na", "Cocaína")
+  x <- str_replace_all(x, "Heroi ?na|Hero[ií]na", "Heroína")
+  
+  # Patrones NA
+  x_lc <- str_to_lower(x)
+  na_patterns <- c("^\\(na\\)$", "^sin consumo$", "^sin especificar$",
+                   "^sin sustancia principal \\(cip-crc\\)$")
+  x[str_detect(x_lc, str_c(na_patterns, collapse="|"))] <- NA_character_
+  
+  x <- str_trim(x)
+  x
+}
+
+# Parche final de codificación
+fix_encoding_issues <- function(x) {
+  x <- as.character(x)
+  
+  # Corrección de glitches de tildes
+  x <- stringi::stri_replace_all_regex(x, "í.{0,1}a", "ía")
+  x <- stringi::stri_replace_all_regex(x, "í.{0,1}o", "ío")
+  x <- stringi::stri_replace_all_regex(x, "í.{0,1}e", "íe")
+  x <- stringi::stri_replace_all_regex(x, "í.{0,1}u", "íu")
+  
+  # Casos específicos
+  x <- str_replace_all(x, "íÁnimo", "Ánimo")
+  x <- str_replace_all(x, "Cocaí.na", "Cocaína")
+  x <- str_replace_all(x, "Heroí.na", "Heroína")
+  x <- str_replace_all(x, "hipomaní.co", "hipomaníaco")
+  x <- str_replace_all(x, "lí.mite", "límite")
+  x <- str_replace_all(x, "Sí.ndrome", "Síndrome")
+  x <- str_replace_all(x, "esquizotí.pico", "esquizotípico")
+  x <- str_replace_all(x, fixed("(afectivos)."), "(afectivos)")
+  
+  x <- str_squish(x)
+  x
+}
+
+# --- 6. FUNCIONES DE AGRUPACIÓN ----------------------------------------------
+
+# Agrupación DSM-IV SUB
+group_dsm_sub <- function(x) {
+  x0 <- as.character(x)
+  
+  grouped <- case_when(
+    str_detect(x0, regex("esquizofreni|esquizoafectiv|esquizofreniforme|psic[oó]tic[oa]|delirant", ignore_case=TRUE)) ~ 
+      "Psicosis",
+    
+    str_detect(x0, regex("depresiv|bipolar|man[ií]ac|hipoman[ií]ac|estado del ?[áa]nimo", ignore_case=TRUE)) ~ 
+      "Trastornos del Estado de Ánimo",
+    
+    str_detect(x0, regex("ansiedad|agorafobia|fobia social|crisis de angustia|p[aá]nico", ignore_case=TRUE)) ~ 
+      "Trastornos de Ansiedad",
+    
+    str_detect(x0, regex("obsesivo-?compulsiv", ignore_case=TRUE)) ~ 
+      "TOC / Trastorno Obsesivo-Compulsivo",
+    
+    str_detect(x0, regex("personalidad", ignore_case=TRUE)) ~ 
+      "Trastornos de la Personalidad",
+    
+    str_detect(x0, regex("somatiz|somatomorf|conversi[oó]n|hipocondr[ií]a|dism[oó]rfic", ignore_case=TRUE)) ~ 
+      "Somatomorfos",
+    
+    str_detect(x0, regex("disociativ|despersonaliz|amnesia disociativa|fuga disociativa|identidad disociativ", ignore_case=TRUE)) ~ 
+      "Disociativos",
+    
+    str_detect(x0, regex("estr[eé]s agudo|postraum[aá]tico|adaptativ|reacciones a estr[eé]s|debido a enfermedad m[eé]dica", ignore_case=TRUE)) ~ 
+      "Trauma y Relacionados con Estrés",
+    
+    str_detect(x0, regex("anorexia|bulimia|conducta alimentaria", ignore_case=TRUE)) ~ 
+      "Trastornos de la Conducta Alimentaria",
+    
+    str_detect(x0, regex("sue[nñ]o|disomnias|parasomnias", ignore_case=TRUE)) ~ 
+      "Trastornos del Sueño",
+    
+    str_detect(x0, regex("delirium|demencia|amn[eé]sic", ignore_case=TRUE)) ~ 
+      "Trastornos Neurocognitivos",
+    
+    str_detect(x0, regex("infancia|niñez|aprendizaje|comunicaci[oó]n|generalizados del desarrollo|hipercin[eé]tico|déficit de atenci[oó]n", ignore_case=TRUE)) ~ 
+      "Trastornos del Neurodesarrollo",
+    
+    str_detect(x0, regex("explosivo intermitente|control de los impulsos|cleptoman|juego patol[oó]gico|disocial", ignore_case=TRUE)) ~ 
+      "Trastornos del Control de Impulsos",
+    
+    str_detect(x0, regex("parafilia|identidad sexual|sexual inducido por sustancias", ignore_case=TRUE)) ~ 
+      "Trastornos de la Sexualidad",
+    
+    TRUE ~ "Otros/No Clasificado"
+  )
+  
+  # Aplicar capitalización apropiada
+  capitalize_vector(grouped)
+}
+
+# Agrupación CIE-10 SUB
+group_cie_sub <- function(x) {
+  x0 <- as.character(x)
+  
+  grouped <- case_when(
+    str_detect(x0, regex("esquizofreni|esquizot[ií]pico|ideas delirantes|psic[oó]ticos no org[aá]nicos|psicosis", ignore_case=TRUE)) ~ 
+      "Esquizofrenia y Trastornos Delirantes",
+    
+    str_detect(x0, regex("humor \\(afectivos\\)|depresiv|bipolar|persistentes", ignore_case=TRUE)) ~ 
+      "Trastornos del Humor (Afectivos)",
+    
+    str_detect(x0, regex("neur[oó]ticos|ansiedad|estr[eé]s|adaptaci[oó]n|obsesivo-?compulsivo|somatomorf", ignore_case=TRUE)) ~ 
+      "Trastornos Neuróticos/Estresantes/Somatomorfos",
+    
+    str_detect(x0, regex("personalidad y del comportamiento del adulto|espec[ií]ficos de la personalidad|mixtos y otros de la personalidad", ignore_case=TRUE)) ~ 
+      "Trastornos de la Personalidad y del Comportamiento del Adulto",
+    
+    str_detect(x0, regex("conducta alimentaria", ignore_case=TRUE)) ~ 
+      "Trastornos de la Conducta Alimentaria",
+    
+    str_detect(x0, regex("desarrollo psicol[oó]gico|aprendizaje escolar|generalizados del desarrollo|psicomotor|emociones.*infancia|comienzo habitual en la infancia", ignore_case=TRUE)) ~ 
+      "Trastornos del Desarrollo Psicológico",
+    
+    str_detect(x0, regex("hipercineticos|déficit de atenci[oó]n", ignore_case=TRUE)) ~ 
+      "Trastornos del Comportamiento y Emociones de Inicio en Infancia/Adolescencia",
+    
+    str_detect(x0, regex("org[aá]nico|sintom[aá]tico|demencia|delirium|amn[eé]sico", ignore_case=TRUE)) ~ 
+      "Trastornos Mentales Orgánicos",
+    
+    str_detect(x0, regex("h[aá]bitos y del control de los impulsos", ignore_case=TRUE)) ~ 
+      "Hábitos y Control de Impulsos",
+    
+    str_detect(x0, regex("no org[aá]nicos del sue[nñ]o", ignore_case=TRUE)) ~ 
+      "Trastornos del Sueño",
+    
+    TRUE ~ "Otros/No Clasificado"
+  )
+  
+  # Aplicar capitalización apropiada
+  capitalize_vector(grouped)
+}
+
+# Agrupación de sustancias
+group_sust <- function(x) {
+  x0 <- as.character(x)
+  
+  grouped <- case_when(
+    str_detect(x0, regex("^\\(NA\\)$", ignore_case=TRUE)) ~ NA_character_,
+    str_detect(x0, regex("^Alcohol$", ignore_case=TRUE)) ~ "Alcohol",
+    str_detect(x0, regex("^Marihuana$", ignore_case=TRUE)) ~ "Cannabis",
+    str_detect(x0, regex("Coca[ií]na|Crack|Pasta Base", ignore_case=TRUE)) ~ "Cocaína/Crack",
+    str_detect(x0, regex("Anfetaminas|Metanfetaminas y otros derivados|Otros Estimulantes|[ÉE]xtasis", ignore_case=TRUE)) ~ "Estimulantes",
+    str_detect(x0, regex("Hero[ií]na|Metadona|Otros Opioides Analg[eé]sicos", ignore_case=TRUE)) ~ "Opioides",
+    str_detect(x0, regex("Sedantes|Hipn[oó]ticos|Tranquilizantes", ignore_case=TRUE)) ~ "Sedantes/Hipnóticos",
+    str_detect(x0, regex("Inhalables", ignore_case=TRUE)) ~ "Inhalables",
+    str_detect(x0, regex("LSD|Hongos|Otros Alucin[oó]genos", ignore_case=TRUE)) ~ "Alucinógenos",
+    str_detect(x0, regex("Fenilciclidina", ignore_case=TRUE)) ~ "Disociativos",
+    str_detect(x0, regex("Esteroides Anab[oó]licos", ignore_case=TRUE)) ~ "Esteroides Anabólicos",
+    TRUE ~ "Otros"
+  )
+  
+  # Aplicar capitalización apropiada
+  capitalize_vector(grouped)
+}
+
+# --- 7. PROCESAMIENTO PRINCIPAL ----------------------------------------------
+
+# Paso 1: Limpieza inicial
+data <- data %>%
+  mutate(
+    # Limpiar columnas DSM
+    across(any_of(cols_dsm), clean_dsm_cie),
+    # Limpiar columnas CIE
+    across(any_of(cols_cie), clean_dsm_cie),
+    # Limpiar columnas de sustancias
+    across(any_of(cols_sust), clean_sustancias)
+  )
+
+# Paso 2: Aplicar parche de encoding
+data <- data %>%
+  mutate(
+    across(any_of(c(cols_dsm, cols_cie, cols_sust)), fix_encoding_issues)
+  )
+
+# Paso 3: Aplicar agrupaciones y capitalización (solo para columnas SUB)
+data <- data %>%
+  mutate(
+    # DSM sub
+    diagnostico_trs_psiquiatrico_sub_dsm_iv = group_dsm_sub(diagnostico_trs_psiquiatrico_sub_dsm_iv),
+    x2_diagnostico_trs_psiquiatrico_dsm_iv = group_dsm_sub(x2_diagnostico_trs_psiquiatrico_dsm_iv),
+    x3_diagnostico_trs_psiquiatrico_dsm_iv = group_dsm_sub(x3_diagnostico_trs_psiquiatrico_dsm_iv),
+    
+    # CIE sub
+    diagnostico_trs_psiquiatrico_sub_cie_10 = group_cie_sub(diagnostico_trs_psiquiatrico_sub_cie_10),
+    x2_diagnostico_trs_psiquiatrico_cie_10 = group_cie_sub(x2_diagnostico_trs_psiquiatrico_cie_10),
+    x3_diagnostico_trs_psiquiatrico_cie_10 = group_cie_sub(x3_diagnostico_trs_psiquiatrico_cie_10),
+    
+    # Sustancias
+    sustancia_principal = group_sust(sustancia_principal),
+    otras_sustancias_no1 = group_sust(otras_sustancias_no1),
+    otras_sustancias_no2 = group_sust(otras_sustancias_no2),
+    otras_sustancias_no3 = group_sust(otras_sustancias_no3)
+  )
+
+# Paso 4: Capitalizar las columnas principales (no SUB)
+data <- data %>%
+  mutate(
+    # Capitalizar columnas principales DSM y CIE
+    diagnostico_trs_psiquiatrico_dsm_iv = capitalize_vector(diagnostico_trs_psiquiatrico_dsm_iv),
+    diagnostico_trs_psiquiatrico_cie_10 = capitalize_vector(diagnostico_trs_psiquiatrico_cie_10)
+  )
+
+# Paso 5: Convertir a factor (excepto identificadores)
+data <- data %>%
+  mutate(
+    across(
+      .cols = where(is.character) & !any_of(c("HASH_KEY", "codigo_identificacion")),
+      .fns = function(x) factor(x, levels = sort(unique(x[!is.na(x)])))
+    )
+  )
+
+# --- 8. VERIFICACIÓN DE RESULTADOS -------------------------------------------
+
+# Función para obtener niveles únicos
+get_levels_summary <- function(df, vars) {
+  faltantes <- setdiff(vars, names(df))
+  if (length(faltantes) > 0) {
+    warning("Variables no encontradas: ", paste(faltantes, collapse = ", "))
+    vars <- intersect(vars, names(df))
+  }
+  
+  summary_list <- list()
+  
+  for (v in vars) {
+    x <- df[[v]]
+    if (is.factor(x)) {
+      levs <- levels(x)
+    } else {
+      levs <- sort(unique(x[!is.na(x)]))
+    }
+    
+    # Información adicional
+    n_na <- sum(is.na(x))
+    n_unique <- length(levs)
+    
+    summary_list[[v]] <- list(
+      levels = levs,
+      n_unique = n_unique,
+      n_na = n_na,
+      n_total = length(x)
+    )
+  }
+  
+  summary_list
+}
+
+# Verificar resultados
+all_vars <- c(cols_dsm, cols_cie, cols_sust)
+levels_summary <- get_levels_summary(data, all_vars)
+
+# Mostrar resumen
+cat("\n", rep("=", 80), "\n", sep = "")
+cat("RESUMEN DE NIVELES DESPUÉS DE LA LIMPIEZA\n")
+cat(rep("=", 80), "\n\n", sep = "")
+
+for (v in names(levels_summary)) {
+  info <- levels_summary[[v]]
+  cat(sprintf("\n📊 %s:\n", v))
+  cat(sprintf("   - Niveles únicos: %d\n", info$n_unique))
+  cat(sprintf("   - Valores NA: %d (%.1f%%)\n", 
+              info$n_na, 100 * info$n_na / info$n_total))
+  cat("   - Niveles:\n")
+  
+  # Mostrar solo primeros 5 niveles si hay muchos
+  levs_to_show <- if(length(info$levels) > 5) {
+    c(info$levels[1:5], paste("... +", length(info$levels) - 5, "más"))
+  } else {
+    info$levels
+  }
+  
+  for (lev in levs_to_show) {
+    cat(sprintf("     • %s\n", lev))
+  }
+}
+
+cat("\n", rep("=", 80), "\n", sep = "")
+cat("✅ PROCESAMIENTO COMPLETADO\n")
+cat(rep("=", 80), "\n", sep = "")
+```
+
+```{r}
+# ================================================================================
+# ANÁLISIS DE REDES DE COMORBILIDAD EN TRATAMIENTO DE ADICCIONES
+# Dataset: 223,061 pacientes en rehabilitación de drogas en Chile
+# ================================================================================
+
+# ================================================================================
+# 1. PREPARACIÓN DE DATOS
+# ================================================================================
+
+prepare_comorbidity_data <- function(data_input) {
+  
+  cat("Preparando datos para análisis de comorbilidad...\n")
+  cat("Dimensiones del dataset:", nrow(data_input), "x", ncol(data_input), "\n")
+  
+  # Variables relevantes para comorbilidad
+  comorbidity_vars <- c(
+    "diagnostico_trs_psiquiatrico_dsm_iv",
+    "diagnostico_trs_psiquiatrico_sub_dsm_iv",
+    "x2_diagnostico_trs_psiquiatrico_dsm_iv",
+    "x3_diagnostico_trs_psiquiatrico_dsm_iv",
+    "diagnostico_trs_psiquiatrico_cie_10",
+    "diagnostico_trs_psiquiatrico_sub_cie_10",
+    "x2_diagnostico_trs_psiquiatrico_cie_10",
+    "x3_diagnostico_trs_psiquiatrico_cie_10",
+    "sustancia_principal",
+    "otras_sustancias_no1",
+    "otras_sustancias_no2",
+    "otras_sustancias_no3",
+    "diagnostico_trs_consumo_sustancia",
+    "otros_problemas_de_atencion_de_salud_mental",
+    "sexo", "edad", "tipo_centro",
+    "fecha_ingresoa_tratamiento"
+  )
+  
+  # Verificar qué variables están disponibles
+  available_vars <- comorbidity_vars[comorbidity_vars %in% names(data_input)]
+  missing_vars <- comorbidity_vars[!comorbidity_vars %in% names(data_input)]
+  
+  if(length(missing_vars) > 0) {
+    cat("\nVariables no encontradas (se omitirán):\n")
+    print(missing_vars)
+  }
+  
+  # Seleccionar solo las variables disponibles
+  df <- data_input %>% 
+    select(all_of(available_vars))
+  
+  # Convertir factores a character para procesamiento más fácil
+  df <- df %>%
+    mutate(across(where(is.factor), as.character))
+  
+  return(df)
+}
+
+# ================================================================================
+# 2. CONSTRUCCIÓN DE MATRIZ DE COMORBILIDAD
+# ================================================================================
+
+create_comorbidity_matrix <- function(df) {
+  
+  cat("\n=== Construyendo matriz de comorbilidad ===\n")
+  
+  # Obtener diagnósticos únicos CIE-10
+  cie10_cols <- grep("diagnostico.*cie_10", names(df), value = TRUE)
+  cie10_main <- character()
+  for(col in cie10_cols) {
+    vals <- unique(df[[col]])
+    cie10_main <- unique(c(cie10_main, vals[!is.na(vals) & vals != "En estudio" & vals != "Sin trastorno"]))
+  }
+  
+  # Obtener diagnósticos únicos DSM-IV
+  dsm_cols <- grep("diagnostico.*dsm_iv", names(df), value = TRUE)
+  dsm_main <- character()
+  for(col in dsm_cols) {
+    vals <- unique(df[[col]])
+    dsm_main <- unique(c(dsm_main, vals[!is.na(vals) & vals != "En estudio" & vals != "Sin trastorno"]))
+  }
+  
+  # Obtener sustancias únicas
+  sust_cols <- c("sustancia_principal", "otras_sustancias_no1", "otras_sustancias_no2", "otras_sustancias_no3")
+  sust_cols <- sust_cols[sust_cols %in% names(df)]
+  sustancias <- character()
+  for(col in sust_cols) {
+    vals <- unique(df[[col]])
+    sustancias <- unique(c(sustancias, vals[!is.na(vals)]))
+  }
+  
+  # Simplificar nombres largos de sustancias
+  sustancias <- gsub("Sedantes:.*", "Sedantes", sustancias)
+  sustancias <- gsub("Inhalables:.*", "Inhalables", sustancias)
+  sustancias <- unique(sustancias)
+  
+  cat("Diagnósticos CIE-10 encontrados:", length(cie10_main), "\n")
+  cat("Diagnósticos DSM-IV encontrados:", length(dsm_main), "\n")
+  cat("Sustancias encontradas:", length(sustancias), "\n")
+  
+  # Limitar número de características si es muy grande
+  if(length(cie10_main) > 50) {
+    cat("Limitando CIE-10 a los 50 más frecuentes\n")
+    freq_cie10 <- table(unlist(df[cie10_cols]))
+    cie10_main <- names(sort(freq_cie10, decreasing = TRUE))[1:min(50, length(freq_cie10))]
+    cie10_main <- cie10_main[!cie10_main %in% c("En estudio", "Sin trastorno", NA)]
+  }
+  
+  if(length(dsm_main) > 50) {
+    cat("Limitando DSM-IV a los 50 más frecuentes\n")
+    freq_dsm <- table(unlist(df[dsm_cols]))
+    dsm_main <- names(sort(freq_dsm, decreasing = TRUE))[1:min(50, length(freq_dsm))]
+    dsm_main <- dsm_main[!dsm_main %in% c("En estudio", "Sin trastorno", NA)]
+  }
+  
+  # Crear matriz binaria
+  n_patients <- nrow(df)
+  n_features <- length(cie10_main) + length(dsm_main) + length(sustancias)
+  
+  cat("Creando matriz de", n_patients, "x", n_features, "\n")
+  
+  feature_matrix <- matrix(0, nrow = n_patients, ncol = n_features)
+  
+  col_names <- c(
+    if(length(cie10_main) > 0) paste0("CIE10_", cie10_main) else character(),
+    if(length(dsm_main) > 0) paste0("DSM_", dsm_main) else character(),
+    if(length(sustancias) > 0) paste0("SUST_", sustancias) else character()
+  )
+  
+  colnames(feature_matrix) <- col_names
+  
+  cat("\nCodificando diagnósticos en matriz binaria...\n")
+  
+  # Llenar matriz - CIE-10
+  col_idx <- 1
+  for(i in seq_along(cie10_main)) {
+    for(col in cie10_cols) {
+      rows <- which(df[[col]] == cie10_main[i])
+      if(length(rows) > 0) feature_matrix[rows, col_idx] <- 1
+    }
+    col_idx <- col_idx + 1
+  }
+  
+  # DSM-IV
+  for(i in seq_along(dsm_main)) {
+    for(col in dsm_cols) {
+      rows <- which(df[[col]] == dsm_main[i])
+      if(length(rows) > 0) feature_matrix[rows, col_idx] <- 1
+    }
+    col_idx <- col_idx + 1
+  }
+  
+  # Sustancias
+  for(i in seq_along(sustancias)) {
+    for(col in sust_cols) {
+      # Aplicar la simplificación también al buscar
+      df_col_simplified <- gsub("Sedantes:.*", "Sedantes", df[[col]])
+      df_col_simplified <- gsub("Inhalables:.*", "Inhalables", df_col_simplified)
+      rows <- which(df_col_simplified == sustancias[i])
+      if(length(rows) > 0) feature_matrix[rows, col_idx] <- 1
+    }
+    col_idx <- col_idx + 1
+  }
+  
+  # Eliminar columnas con muy pocas observaciones
+  col_sums <- colSums(feature_matrix)
+  min_obs <- max(10, n_patients * 0.001)  # Mínimo 10 casos o 0.1% de la muestra
+  keep_cols <- col_sums >= min_obs
+  
+  cat("Eliminando", sum(!keep_cols), "características con menos de", min_obs, "casos\n")
+  
+  feature_matrix <- feature_matrix[, keep_cols]
+  col_names <- col_names[keep_cols]
+  colnames(feature_matrix) <- col_names
+  
+  # Convertir a sparse matrix
+  feature_matrix <- Matrix(feature_matrix, sparse = TRUE)
+  
+  # Calcular matriz de correlación
+  cat("\nCalculando correlaciones...\n")
+  correlation_matrix <- cor(as.matrix(feature_matrix), use = "pairwise.complete.obs")
+  
+  # Manejar NAs y valores infinitos
+  correlation_matrix[is.na(correlation_matrix)] <- 0
+  correlation_matrix[is.infinite(correlation_matrix)] <- 0
+  diag(correlation_matrix) <- 1
+  
+  return(list(
+    feature_matrix = feature_matrix,
+    correlation = correlation_matrix,
+    feature_names = col_names,
+    n_patients = n_patients
+  ))
+}
+
+# ================================================================================
+# 3. ESTIMACIÓN DE RED - VERSIÓN CORREGIDA
+# ================================================================================
+
+estimate_comorbidity_network <- function(comorbidity_data, lambda = NULL, gamma = 0.5) {
+  
+  cat("\n=== Estimando red de comorbilidad con Graphical LASSO ===\n")
+  
+  correlation_matrix <- comorbidity_data$correlation
+  
+  # Verificar matriz
+  if(any(is.na(correlation_matrix))) {
+    correlation_matrix[is.na(correlation_matrix)] <- 0
+  }
+  
+  # Asegurar simetría
+  correlation_matrix <- (correlation_matrix + t(correlation_matrix)) / 2
+  diag(correlation_matrix) <- 1
+  
+  if(is.null(lambda)) {
+    cat("Seleccionando lambda óptimo mediante EBIC...\n")
+    cat("Usando gamma =", gamma, "(0 = menos penalización, 1 = más penalización)\n")
+    
+    tryCatch({
+      network <- qgraph::EBICglasso(
+        correlation_matrix,
+        n = comorbidity_data$n_patients,
+        gamma = gamma,
+        threshold = TRUE,
+        returnAllResults = TRUE,
+        checkPD = TRUE
+      )
+      
+      cat("Lambda seleccionado:", network$lambda, "\n")
+      
+      # Verificar sparsidad
+      sparsity <- mean(network$optnet == 0)
+      cat("Sparsidad de la red:", round(sparsity * 100, 2), "%\n")
+      
+    }, error = function(e) {
+      cat("Error en EBICglasso:", e$message, "\n")
+      cat("Usando threshold manual\n")
+      
+      threshold_val <- 0.1
+      partial_cor <- correlation_matrix
+      partial_cor[abs(partial_cor) < threshold_val] <- 0
+      
+      network <- list(
+        optnet = partial_cor,
+        lambda = threshold_val
+      )
+    })
+  }
+  
+  # Extraer matriz de pesos
+  weights_matrix <- network$optnet
+  
+  # Crear objeto igraph
+  g <- graph_from_adjacency_matrix(
+    abs(weights_matrix),
+    mode = "undirected",
+    weighted = TRUE,
+    diag = FALSE
+  )
+  
+  # Primero agregar TODOS los atributos antes de eliminar nodos
+  V(g)$name <- comorbidity_data$feature_names
+  
+  V(g)$type <- case_when(
+    grepl("^CIE10_", V(g)$name) ~ "CIE-10",
+    grepl("^DSM_", V(g)$name) ~ "DSM-IV",
+    grepl("^SUST_", V(g)$name) ~ "Sustancia",
+    TRUE ~ "Otro"
+  )
+  
+  prevalence <- colSums(comorbidity_data$feature_matrix) / comorbidity_data$n_patients
+  V(g)$prevalence <- as.numeric(prevalence)
+  
+  # AHORA eliminar nodos aislados si es necesario
+  isolated <- which(degree(g) == 0)
+  if(length(isolated) > 0) {
+    cat("Nodos aislados encontrados:", length(isolated), "\n")
+    
+    if(length(isolated) > vcount(g) * 0.2) {
+      cat("Eliminando nodos aislados (>20% del total)\n")
+      g <- delete.vertices(g, isolated)
+      # También actualizar la matriz de pesos
+      weights_matrix <- weights_matrix[-isolated, -isolated]
+    } else {
+      cat("Manteniendo nodos aislados (<20% del total)\n")
+    }
+  }
+  
+  # Información sobre la red
+  cat("\nCaracterísticas de la red:\n")
+  cat("- Nodos:", vcount(g), "\n")
+  cat("- Aristas:", ecount(g), "\n")
+  cat("- Densidad:", round(edge_density(g), 4), "\n")
+  cat("- Componentes conectados:", components(g)$no, "\n")
+  
+  return(list(
+    graph = g,
+    weights = weights_matrix,
+    glasso_results = network
+  ))
+}
+
+# ================================================================================
+# 4. CÁLCULO DE MÉTRICAS DE CENTRALIDAD - VERSIÓN ROBUSTA
+# ================================================================================
+
+calculate_centrality_metrics <- function(network) {
+  
+  cat("\n=== Calculando métricas de centralidad ===\n")
+  
+  g <- network$graph
+  weights <- network$weights
+  
+  # Verificar que el grafo tenga nodos
+  if(vcount(g) == 0) {
+    cat("Error: Grafo sin nodos\n")
+    return(data.frame())
+  }
+  
+  # Métricas básicas de centralidad
+  centrality_metrics <- data.frame(
+    node = V(g)$name,
+    type = V(g)$type,
+    prevalence = V(g)$prevalence,
+    degree = degree(g),
+    strength = strength(g, weights = E(g)$weight)
+  )
+  
+  # Calcular métricas adicionales solo si el grafo tiene aristas
+  if(ecount(g) > 0) {
+    # Betweenness (manejo de grafos desconectados)
+    centrality_metrics$betweenness <- betweenness(g, 
+                                                  weights = if(ecount(g) > 0) 1/E(g)$weight else NULL, 
+                                                  normalized = TRUE)
+    
+    # Closeness (puede ser problemático con grafos desconectados)
+    tryCatch({
+      centrality_metrics$closeness <- closeness(g, 
+                                               weights = if(ecount(g) > 0) 1/E(g)$weight else NULL, 
+                                               normalized = TRUE)
+    }, error = function(e) {
+      cat("Closeness no calculable (grafo desconectado)\n")
+      centrality_metrics$closeness <- NA
+    })
+    
+    # Eigenvector centrality
+    tryCatch({
+      centrality_metrics$eigenvector <- eigen_centrality(g, weights = E(g)$weight)$vector
+    }, error = function(e) {
+      cat("Eigenvector centrality no calculable\n")
+      centrality_metrics$eigenvector <- NA
+    })
+    
+    # Clustering coefficient
+    centrality_metrics$clustering <- transitivity(g, type = "local", isolates = "zero")
+    
+    # Expected Influence
+    n_nodes <- vcount(g)
+    expected_influence <- numeric(n_nodes)
+    
+    for(i in 1:n_nodes) {
+      if(i <= nrow(weights) && i <= ncol(weights)) {
+        expected_influence[i] <- sum(weights[i, ] * sign(weights[i, ]), na.rm = TRUE)
+      }
+    }
+    centrality_metrics$expected_influence <- expected_influence
+    
+    # Bridge strength
+    bridge_strength <- numeric(n_nodes)
+    
+    for(i in 1:n_nodes) {
+      neighbors_idx <- neighbors(g, i)
+      if(length(neighbors_idx) == 0) {
+        bridge_strength[i] <- 0
+      } else {
+        node_type <- V(g)$type[i]
+        different_type_neighbors <- neighbors_idx[V(g)$type[neighbors_idx] != node_type]
+        
+        if(length(different_type_neighbors) == 0) {
+          bridge_strength[i] <- 0
+        } else if(i <= nrow(weights)) {
+          valid_neighbors <- different_type_neighbors[different_type_neighbors <= ncol(weights)]
+          if(length(valid_neighbors) > 0) {
+            bridge_strength[i] <- sum(abs(weights[i, valid_neighbors]), na.rm = TRUE)
+          } else {
+            bridge_strength[i] <- 0
+          }
+        }
+      }
+    }
+    centrality_metrics$bridge_strength <- bridge_strength
+    
+  } else {
+    # Si no hay aristas, llenar con valores por defecto
+    centrality_metrics$betweenness <- 0
+    centrality_metrics$closeness <- 0
+    centrality_metrics$eigenvector <- 0
+    centrality_metrics$clustering <- 0
+    centrality_metrics$expected_influence <- 0
+    centrality_metrics$bridge_strength <- 0
+  }
+  
+  # Ordenar por strength centrality
+  centrality_metrics <- centrality_metrics %>%
+    arrange(desc(strength))
+  
+  return(centrality_metrics)
+}
+
+# ================================================================================
+# 5. DETECCIÓN DE COMUNIDADES (CORREGIDA)
+# ================================================================================
+
+detect_communities <- function(network) {
+  
+  cat("\n=== Detectando comunidades en la red ===\n")
+  
+  g <- network$graph
+  
+  # Verificar conectividad del grafo
+  is_connected <- is.connected(g)
+  cat("Grafo conectado:", is_connected, "\n")
+  
+  if(!is_connected) {
+    components <- components(g)
+    cat("Número de componentes:", components$no, "\n")
+    cat("Tamaño del componente principal:", max(components$csize), "\n")
+  }
+  
+  # Múltiples algoritmos de detección de comunidades
+  communities_list <- list()
+  
+  # 1. Louvain (funciona con grafos desconectados)
+  communities_list$louvain <- cluster_louvain(g, weights = E(g)$weight)
+  
+  # 2. Walktrap (funciona con grafos desconectados)
+  communities_list$walktrap <- cluster_walktrap(g, weights = E(g)$weight, steps = 4)
+  
+  # 3. Fast greedy (funciona con grafos desconectados)
+  communities_list$fastgreedy <- cluster_fast_greedy(g, weights = E(g)$weight)
+  
+  # 4. Spinglass solo si el grafo está conectado y no es muy grande
+  if(is_connected && vcount(g) < 200) {
+    cat("Aplicando algoritmo spinglass...\n")
+    communities_list$spinglass <- cluster_spinglass(g, weights = E(g)$weight)
+  } else if(!is_connected) {
+    cat("Omitiendo spinglass: grafo no conectado\n")
+  } else {
+    cat("Omitiendo spinglass: grafo muy grande\n")
+  }
+  
+  # Calcular modularidad para cada método
+  modularities <- sapply(communities_list, modularity)
+  
+  # Seleccionar el mejor método basado en modularidad
+  best_method <- names(which.max(modularities))
+  best_communities <- communities_list[[best_method]]
+  
+  cat("\nModularidades por método:\n")
+  print(modularities)
+  cat("\nMejor método:", best_method, "con modularidad:", max(modularities), "\n")
+  
+  # Agregar membresía de comunidad al grafo
+  V(g)$community <- membership(best_communities)
+  
+  # Análisis de composición de comunidades
+  community_composition <- data.frame(
+    node = V(g)$name,
+    type = V(g)$type,
+    community = V(g)$community,
+    prevalence = V(g)$prevalence
+  )
+  
+  # Resumen por comunidad
+  community_summary <- community_composition %>%
+    group_by(community) %>%
+    summarise(
+      size = n(),
+      n_cie10 = sum(type == "CIE-10"),
+      n_dsm = sum(type == "DSM-IV"),
+      n_sustancias = sum(type == "Sustancia"),
+      mean_prevalence = mean(prevalence),
+      nodes = paste(node[order(prevalence, decreasing = TRUE)][1:min(5, n())], collapse = ", ")
+    ) %>%
+    arrange(desc(size))
+  
+  return(list(
+    communities = best_communities,
+    method = best_method,
+    modularity = max(modularities),
+    composition = community_composition,
+    summary = community_summary,
+    graph = g  # Devolver el grafo actualizado
+  ))
+}
+
+# ================================================================================
+# 6. VISUALIZACIÓN DE LA RED - CORRECCIÓN FINAL
+# ================================================================================
+
+visualize_comorbidity_network <- function(network, centrality, communities, 
+                                         layout_algorithm = "fr",
+                                         filter_threshold = 0.1) {
+  
+  cat("\n=== Generando visualizaciones ===\n")
+  
+  g <- network$graph
+  weights <- network$weights
+  
+  # Filtrar aristas débiles
+  g_filtered <- delete_edges(g, which(E(g)$weight < filter_threshold))
+  
+  # Layout
+  if(layout_algorithm == "fr") {
+    layout <- layout_with_fr(g_filtered, weights = E(g_filtered)$weight)
+  } else if(layout_algorithm == "kk") {
+    layout <- layout_with_kk(g_filtered, weights = E(g_filtered)$weight)
+  } else {
+    layout <- layout_nicely(g_filtered)
+  }
+  
+  # Colores por tipo de nodo
+  node_colors <- case_when(
+    V(g_filtered)$type == "CIE-10" ~ "#FF6B6B",
+    V(g_filtered)$type == "DSM-IV" ~ "#4ECDC4",
+    V(g_filtered)$type == "Sustancia" ~ "#45B7D1",
+    TRUE ~ "#95A5A6"
+  )
+  
+  # Tamaños por centralidad
+  node_indices <- match(V(g_filtered)$name, centrality$node)
+  node_sizes <- rep(10, vcount(g_filtered))
+  
+  valid_indices <- !is.na(node_indices)
+  if(any(valid_indices)) {
+    max_strength <- max(centrality$strength, na.rm = TRUE)
+    if(max_strength > 0) {
+      node_sizes[valid_indices] <- 5 + 20 * (centrality$strength[node_indices[valid_indices]] / max_strength)
+    }
+  }
+  
+  # === VISUALIZACIÓN 1: Red con qgraph ===
+  
+  # Preparar grupos
+  groups <- list()
+  cie10_idx <- which(grepl("^CIE10_", colnames(weights)))
+  dsm_idx <- which(grepl("^DSM_", colnames(weights)))
+  sust_idx <- which(grepl("^SUST_", colnames(weights)))
+  
+  if(length(cie10_idx) > 0) groups[["CIE-10"]] <- cie10_idx
+  if(length(dsm_idx) > 0) groups[["DSM-IV"]] <- dsm_idx
+  if(length(sust_idx) > 0) groups[["Sustancias"]] <- sust_idx
+  
+  node_labels <- gsub("^CIE10_|^DSM_|^SUST_", "", colnames(weights))
+  node_labels <- substr(node_labels, 1, 20)
+  
+  pdf("comorbidity_network_qgraph.pdf", width = 16, height = 12)
+  
+  tryCatch({
+    qgraph(weights,
+           layout = "spring",
+           groups = if(length(groups) > 0) groups else NULL,
+           labels = node_labels,
+           label.cex = 0.7,
+           title = "Red de Comorbilidad - Tratamiento de Adicciones",
+           legend.cex = 0.4,
+           GLratio = 1.5,
+           minimum = filter_threshold,
+           cut = filter_threshold,
+           border.width = 2,
+           border.color = "black",
+           edge.color = "gray",
+           theme = "colorblind",
+           details = TRUE)
+  }, error = function(e) {
+    cat("Error en qgraph:", e$message, "\n")
+    plot.new()
+    text(0.5, 0.5, "Error generando visualización qgraph", cex = 2)
+  })
+  
+  dev.off()
+  
+  # === VISUALIZACIÓN 2: Centralidad ===
+  
+  pdf("centrality_plot.pdf", width = 12, height = 10)
+  
+  top_n_nodes <- min(30, nrow(centrality))
+  top_nodes <- centrality %>%
+    slice_max(strength, n = top_n_nodes) %>%
+    mutate(
+      label = gsub("^CIE10_|^DSM_|^SUST_", "", node),
+      label = substr(label, 1, 30)
+    )
+  
+  p1 <- ggplot(top_nodes, aes(x = reorder(label, strength), y = strength, fill = type)) +
+    geom_bar(stat = "identity") +
+    coord_flip() +
+    scale_fill_manual(values = c("CIE-10" = "#FF6B6B", 
+                                "DSM-IV" = "#4ECDC4", 
+                                "Sustancia" = "#45B7D1")) +
+    labs(title = paste("Top", top_n_nodes, "Nodos por Strength Centrality"),
+         x = "", y = "Strength Centrality", fill = "Tipo") +
+    theme_minimal() +
+    theme(legend.position = "bottom")
+  
+  print(p1)
+  
+  dev.off()
+  
+  # === VISUALIZACIÓN 3: Comunidades ===
+  
+  pdf("communities_network.pdf", width = 14, height = 12)
+  
+  if(!is.null(communities$graph)) {
+    V(g_filtered)$community <- V(communities$graph)$community[match(V(g_filtered)$name, V(communities$graph)$name)]
+  }
+  
+  n_communities <- max(V(g_filtered)$community, na.rm = TRUE)
+  if(!is.na(n_communities) && n_communities > 0) {
+    community_colors <- rainbow(n_communities)
+    vertex_colors <- community_colors[V(g_filtered)$community]
+  } else {
+    vertex_colors <- node_colors
+  }
+  
+  plot(g_filtered,
+       layout = layout,
+       vertex.color = vertex_colors,
+       vertex.size = node_sizes,
+       vertex.label = gsub("^CIE10_|^DSM_|^SUST_", "", V(g_filtered)$name),
+       vertex.label.cex = 0.6,
+       vertex.label.dist = 0.5,
+       edge.width = E(g_filtered)$weight * 5,
+       edge.color = adjustcolor("gray", alpha = 0.5),
+       main = "Detección de Comunidades en Red de Comorbilidad")
+  
+  if(!is.na(n_communities) && n_communities > 0) {
+    legend("bottomright", 
+           legend = paste("Comunidad", 1:n_communities),
+           col = community_colors,
+           pch = 19,
+           cex = 0.8,
+           bty = "n")
+  }
+  
+  dev.off()
+  
+  # === VISUALIZACIÓN 4: Red interactiva - CORREGIDA ===
+  
+  # Preparar datos para visNetwork
+  nodes_vis <- data.frame(
+    id = 1:vcount(g_filtered),
+    label = gsub("^CIE10_|^DSM_|^SUST_", "", V(g_filtered)$name),
+    group = V(g_filtered)$type,
+    value = node_sizes,
+    title = paste0(
+      V(g_filtered)$name, "<br>",
+      "Tipo: ", V(g_filtered)$type, "<br>",
+      "Prevalencia: ", round(V(g_filtered)$prevalence * 100, 2), "%<br>",
+      "Comunidad: ", ifelse(is.na(V(g_filtered)$community), "NA", V(g_filtered)$community)
+    )
+  )
+  
+  # CORRECCIÓN: Usar igraph::as_data_frame con sintaxis correcta
+  edges_vis <- data.frame(from = integer(), to = integer())
+  
+  if(ecount(g_filtered) > 0) {
+    # Obtener lista de aristas manualmente
+    edge_list <- get.edgelist(g_filtered)
+    edge_weights <- E(g_filtered)$weight
+    
+    # Convertir nombres a IDs
+    from_ids <- match(edge_list[,1], V(g_filtered)$name)
+    to_ids <- match(edge_list[,2], V(g_filtered)$name)
+    
+    edges_vis <- data.frame(
+      from = from_ids,
+      to = to_ids,
+      value = edge_weights,
+      color = "#2ECC71",
+      title = paste0("Peso: ", round(edge_weights, 3))
+    )
+  }
+  
+  # Crear visualización interactiva
+  vis_network <- visNetwork(nodes_vis, edges_vis, height = "800px", width = "100%") %>%
+    visGroups(groupname = "CIE-10", color = "#FF6B6B") %>%
+    visGroups(groupname = "DSM-IV", color = "#4ECDC4") %>%
+    visGroups(groupname = "Sustancia", color = "#45B7D1") %>%
+    visOptions(
+      highlightNearest = list(enabled = TRUE, degree = 1, hover = TRUE),
+      nodesIdSelection = TRUE
+    ) %>%
+    visPhysics(
+      stabilization = list(iterations = 200),
+      solver = "forceAtlas2Based"
+    ) %>%
+    visLayout(randomSeed = 123) %>%
+    visInteraction(navigationButtons = TRUE, zoomView = TRUE)
+  
+  # Guardar HTML
+  visSave(vis_network, file = "comorbidity_network_interactive.html")
+  
+  cat("\nVisualizaciones guardadas:\n")
+  cat("- comorbidity_network_qgraph.pdf\n")
+  cat("- centrality_plot.pdf\n")
+  cat("- communities_network.pdf\n")
+  cat("- comorbidity_network_interactive.html\n")
+  
+  return(vis_network)
+}
+
+# ================================================================================
+# 7. ANÁLISIS DE ESTABILIDAD Y PRECISIÓN
+# ================================================================================
+
+assess_network_stability <- function(comorbidity_data, nboots = 100, ncores = 4) {
+  
+  cat("\n=== Evaluando estabilidad de la red ===\n")
+  cat("Esto puede tomar varios minutos...\n")
+  
+  # Preparar datos para bootnet
+  cor_matrix <- comorbidity_data$correlation
+  
+  # Bootstrap no paramétrico
+  boot_results <- bootnet(
+    cor_matrix,
+    default = "EBICglasso",
+    nBoots = nboots,
+    nCores = ncores,
+    type = "nonparametric",
+    statistics = c("edge", "strength", "betweenness", "closeness")
+  )
+  
+  # Bootstrap case-dropping para estabilidad
+  stability_results <- bootnet(
+    cor_matrix,
+    default = "EBICglasso",
+    nBoots = nboots,
+    nCores = ncores,
+    type = "case",
+    statistics = c("strength", "betweenness", "closeness")
+  )
+  
+  # Calcular coeficiente de estabilidad de correlación (CS-coefficient)
+  cs_strength <- corStability(stability_results, statistics = "strength")
+  cs_betweenness <- corStability(stability_results, statistics = "betweenness")
+  cs_closeness <- corStability(stability_results, statistics = "closeness")
+  
+  cat("\n=== Coeficientes de Estabilidad (CS) ===\n")
+  cat("(Valores > 0.25 aceptables, > 0.5 buenos)\n")
+  cat("Strength:", cs_strength, "\n")
+  cat("Betweenness:", cs_betweenness, "\n")
+  cat("Closeness:", cs_closeness, "\n")
+  
+  # Visualizar resultados
+  pdf("network_stability.pdf", width = 12, height = 10)
+  
+  # Plot 1: Intervalos de confianza de aristas
+  plot(boot_results, labels = FALSE, order = "sample")
+  
+  # Plot 2: Estabilidad de centralidad
+  plot(stability_results)
+  
+  # Plot 3: Diferencias entre aristas
+  plot(boot_results, "edge", plot = "difference", onlyNonZero = TRUE, order = "sample")
+  
+  dev.off()
+  
+  return(list(
+    bootstrap = boot_results,
+    stability = stability_results,
+    cs_coefficients = c(
+      strength = cs_strength,
+      betweenness = cs_betweenness,
+      closeness = cs_closeness
+    )
+  ))
+}
+
+# ================================================================================
+# 8. ANÁLISIS DE SUBGRUPOS
+# ================================================================================
+
+analyze_subgroups <- function(df, comorbidity_vars, subgroup_var = "sexo") {
+  
+  cat("\n=== Análisis de subgrupos por", subgroup_var, "===\n")
+  
+  # Dividir datos por subgrupo
+  subgroups <- split(df, df[[subgroup_var]])
+  
+  # Calcular redes para cada subgrupo
+  subgroup_networks <- list()
+  
+  for(group_name in names(subgroups)) {
+    cat("\nProcesando grupo:", group_name, "\n")
+    
+    # Crear matriz de comorbilidad para el subgrupo
+    group_data <- create_comorbidity_matrix(subgroups[[group_name]])
+    
+    # Estimar red
+    group_network <- estimate_comorbidity_network(group_data)
+    
+    # Calcular centralidad
+    group_centrality <- calculate_centrality_metrics(group_network)
+    
+    subgroup_networks[[group_name]] <- list(
+      network = group_network,
+      centrality = group_centrality,
+      n_patients = nrow(subgroups[[group_name]])
+    )
+  }
+  
+  # Comparar redes entre subgrupos
+  if(length(subgroups) == 2) {
+    cat("\n=== Comparando redes entre grupos ===\n")
+    
+    # Test de comparación de redes
+    nct_results <- NetworkComparisonTest(
+      subgroup_networks[[1]]$network$weights,
+      subgroup_networks[[2]]$network$weights,
+      it = 100,
+      binary.data = FALSE,
+      test.edges = TRUE,
+      test.centrality = TRUE
+    )
+    
+    cat("Diferencia global en estructura de red (p-valor):", nct_results$nwinv.pval, "\n")
+    cat("Diferencia global en fuerza de conexión (p-valor):", nct_results$glstrinv.pval, "\n")
+  }
+  
+  return(list(
+    subgroup_networks = subgroup_networks,
+    comparison = if(exists("nct_results")) nct_results else NULL
+  ))
+}
+
+# ================================================================================
+# 9. ANÁLISIS DE PATRONES TEMPORALES
+# ================================================================================
+
+analyze_temporal_patterns <- function(df, time_var = "fecha_ingresoa_tratamiento") {
+  
+  cat("\n=== Análisis de patrones temporales ===\n")
+  
+  # Convertir fechas
+  df$fecha <- as.Date(df[[time_var]], format = "%d/%m/%Y")
+  
+  # Crear períodos (por año o trimestre)
+  df$year <- year(df$fecha)
+  df$quarter <- quarter(df$fecha)
+  df$period <- paste0(df$year, "-Q", df$quarter)
+  
+  # Filtrar períodos con suficientes datos
+  period_counts <- table(df$period)
+  valid_periods <- names(period_counts[period_counts > 1000])
+  
+  # Analizar evolución de prevalencias
+  prevalence_evolution <- df %>%
+    filter(period %in% valid_periods) %>%
+    group_by(period) %>%
+    summarise(
+      n_patients = n(),
+      prop_pasta_base = mean(sustancia_principal == "Pasta Base", na.rm = TRUE),
+      prop_alcohol = mean(sustancia_principal == "Alcohol", na.rm = TRUE),
+      prop_cocaina = mean(grepl("Coca", sustancia_principal), na.rm = TRUE),
+      prop_marihuana = mean(sustancia_principal == "Marihuana", na.rm = TRUE),
+      prop_comorbid_mental = mean(!is.na(diagnostico_trs_psiquiatrico_cie_10) & 
+                                  diagnostico_trs_psiquiatrico_cie_10 != "Sin trastorno", 
+                                  na.rm = TRUE)
+    ) %>%
+    arrange(period)
+  
+  # Visualizar tendencias
+  pdf("temporal_trends.pdf", width = 12, height = 8)
+  
+  prevalence_long <- prevalence_evolution %>%
+    pivot_longer(cols = starts_with("prop_"), 
+                names_to = "condition", 
+                values_to = "prevalence") %>%
+    mutate(condition = gsub("prop_", "", condition))
+  
+  p <- ggplot(prevalence_long, aes(x = period, y = prevalence, 
+                                   color = condition, group = condition)) +
+    geom_line(size = 1.2) +
+    geom_point(size = 2) +
+    scale_y_continuous(labels = scales::percent) +
+    labs(title = "Evolución Temporal de Prevalencias",
+         x = "Período", y = "Prevalencia", color = "Condición") +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1),
+          legend.position = "bottom")
+  
+  print(p)
+  
+  dev.off()
+  
+  return(prevalence_evolution)
+}
+
+# ================================================================================
+# 10. FUNCIÓN PRINCIPAL CORREGIDA
+# ================================================================================
+
+run_comorbidity_analysis <- function(data_input, output_dir = "comorbidity_results") {
+  
+  # Crear directorio de salida
+  if(!dir.exists(output_dir)) {
+    dir.create(output_dir, recursive = TRUE)
+  }
+  
+  # Guardar directorio actual
+  original_dir <- getwd()
+  setwd(output_dir)
+  
+  cat("\n")
+  cat("========================================================\n")
+  cat("  ANÁLISIS DE REDES DE COMORBILIDAD - INICIO\n")
+  cat("========================================================\n")
+  
+  start_time <- Sys.time()
+  
+  tryCatch({
+    # 1. Preparar datos
+    df <- prepare_comorbidity_data(data_input)
+    
+    # 2. Crear matriz de comorbilidad
+    comorbidity_data <- create_comorbidity_matrix(df)
+    
+    if(ncol(comorbidity_data$correlation) < 2) {
+      stop("Insuficientes características para construir una red")
+    }
+    
+    # 3. Estimar red
+    network <- estimate_comorbidity_network(comorbidity_data)
+    
+    # 4. Calcular centralidad
+    centrality <- calculate_centrality_metrics(network)
+    
+    # 5. Detectar comunidades
+    communities <- detect_communities(network)
+    
+    # 6. Visualizar
+    vis_network <- visualize_comorbidity_network(network, centrality, communities)
+    
+    # 7. Análisis de subgrupos (simplificado)
+    subgroup_analysis <- NULL
+    if("sexo" %in% names(df)) {
+      cat("\n=== Análisis por sexo ===\n")
+      tabla_sexo <- table(df$sexo)
+      print(tabla_sexo)
+    }
+    
+    # 8. Análisis temporal
+    temporal_patterns <- NULL
+    if("fecha_ingresoa_tratamiento" %in% names(df)) {
+      temporal_patterns <- analyze_temporal_patterns(df)
+    }
+    
+    # Guardar resultados
+    cat("\n=== Guardando resultados ===\n")
+    
+    write.csv(centrality, "centrality_metrics.csv", row.names = FALSE)
+    write.csv(communities$summary, "community_summary.csv", row.names = FALSE)
+    
+    # Resumen
+    summary_report <- list(
+      n_patients = comorbidity_data$n_patients,
+      n_nodes = vcount(network$graph),
+      n_edges = ecount(network$graph),
+      density = edge_density(network$graph),
+      transitivity = transitivity(network$graph),
+      modularity = communities$modularity,
+      n_communities = length(unique(V(network$graph)$community)),
+      top_central_nodes = head(centrality, 10),
+      execution_time = Sys.time() - start_time
+    )
+    
+    saveRDS(summary_report, "analysis_summary.rds")
+    
+    # Imprimir resumen
+    cat("\n========================================================\n")
+    cat("  RESUMEN DEL ANÁLISIS\n")
+    cat("========================================================\n")
+    cat("Pacientes analizados:", summary_report$n_patients, "\n")
+    cat("Nodos en la red:", summary_report$n_nodes, "\n")
+    cat("Aristas en la red:", summary_report$n_edges, "\n")
+    cat("Densidad de la red:", round(summary_report$density, 4), "\n")
+    cat("\n=== Top 5 nodos más centrales ===\n")
+    print(head(centrality[, c("node", "type", "strength")], 5))
+    
+    cat("\n========================================================\n")
+    cat("  ANÁLISIS COMPLETADO\n")
+    cat("========================================================\n")
+    
+    return(list(
+      network = network,
+      centrality = centrality,
+      communities = communities,
+      summary = summary_report
+    ))
+    
+  }, error = function(e) {
+    cat("\nError durante el análisis:", e$message, "\n")
+    setwd(original_dir)
+    stop(e)
+  }, finally = {
+    setwd(original_dir)
+  })
+}
+
+# ================================================================================
+# EJECUTAR ANÁLISIS
+# ================================================================================
+
+# Ejecutar análisis
+results <- run_comorbidity_analysis(
+  data_input = data,
+  output_dir = "comorbidity_analysis_results"
+)
+```
+
+```{r}
+# ================================================================================
+# ANÁLISIS DE REDES DE COMORBILIDAD - DIAGNÓSTICOS PRINCIPALES
+# Dataset: 223,061 pacientes en rehabilitación de drogas en Chile
+# ================================================================================
+
+# ================================================================================
+# 1. PREPARACIÓN DE DATOS
+# ================================================================================
+
+prepare_comorbidity_data <- function(data_input) {
+  
+  cat("Preparando datos para análisis de comorbilidad...\n")
+  cat("Dimensiones del dataset:", nrow(data_input), "x", ncol(data_input), "\n")
+  
+  # Variables relevantes para comorbilidad - SOLO DIAGNÓSTICOS PRINCIPALES
+  comorbidity_vars <- c(
+    # Solo diagnósticos principales DSM-IV
+    "diagnostico_trs_psiquiatrico_dsm_iv",
+    # Solo diagnósticos principales CIE-10
+    "diagnostico_trs_psiquiatrico_cie_10",
+    # Todas las sustancias
+    "sustancia_principal",
+    "otras_sustancias_no1",
+    "otras_sustancias_no2",
+    "otras_sustancias_no3",
+    # Variables demográficas
+    "sexo", "edad", "tipo_centro",
+    "fecha_ingresoa_tratamiento"
+  )
+  
+  # Verificar qué variables están disponibles
+  available_vars <- comorbidity_vars[comorbidity_vars %in% names(data_input)]
+  missing_vars <- comorbidity_vars[!comorbidity_vars %in% names(data_input)]
+  
+  if(length(missing_vars) > 0) {
+    cat("\nVariables no encontradas (se omitirán):\n")
+    print(missing_vars)
+  }
+  
+  # Seleccionar solo las variables disponibles
+  df <- data_input %>% 
+    select(all_of(available_vars))
+  
+  # Convertir factores a character para procesamiento más fácil
+  df <- df %>%
+    mutate(across(where(is.factor), as.character))
+  
+  return(df)
+}
+
+# ================================================================================
+# 2. CONSTRUCCIÓN DE MATRIZ DE COMORBILIDAD - MODIFICADA PARA DIAGNÓSTICOS PRINCIPALES
+# ================================================================================
+
+create_comorbidity_matrix <- function(df) {
+  
+  cat("\n=== Construyendo matriz de comorbilidad (Diagnósticos Principales) ===\n")
+  
+  # SOLO diagnóstico principal CIE-10
+  cie10_vals <- unique(df$diagnostico_trs_psiquiatrico_cie_10)
+  cie10_main <- cie10_vals[!is.na(cie10_vals) & 
+                           !cie10_vals %in% c("En estudio", "Sin trastorno", "(NA)")]
+  
+  # SOLO diagnóstico principal DSM-IV
+  dsm_vals <- unique(df$diagnostico_trs_psiquiatrico_dsm_iv)
+  dsm_main <- dsm_vals[!is.na(dsm_vals) & 
+                      !dsm_vals %in% c("En estudio", "Sin trastorno", "(NA)")]
+  
+  # Obtener TODAS las sustancias únicas (sin agrupar)
+  sust_cols <- c("sustancia_principal", "otras_sustancias_no1", 
+                 "otras_sustancias_no2", "otras_sustancias_no3")
+  sust_cols <- sust_cols[sust_cols %in% names(df)]
+  
+  sustancias <- character()
+  for(col in sust_cols) {
+    vals <- unique(df[[col]])
+    # Limpiar valores NA y vacíos
+    vals <- vals[!is.na(vals) & 
+                !vals %in% c("(NA)", "Sin consumo", "Sin especificar",
+                           "Sin sustancia principal (CIP-CRC)")]
+    sustancias <- unique(c(sustancias, vals))
+  }
+  
+  cat("Diagnósticos principales CIE-10 encontrados:", length(cie10_main), "\n")
+  cat("Diagnósticos principales DSM-IV encontrados:", length(dsm_main), "\n")
+  cat("Sustancias únicas encontradas:", length(sustancias), "\n")
+  
+  # Limitar número si es necesario (pero con umbral más alto para capturar más diversidad)
+  if(length(cie10_main) > 100) {
+    cat("Limitando CIE-10 a los 100 más frecuentes\n")
+    freq_cie10 <- table(df$diagnostico_trs_psiquiatrico_cie_10)
+    cie10_main <- names(sort(freq_cie10, decreasing = TRUE))[1:min(100, length(freq_cie10))]
+    cie10_main <- cie10_main[!cie10_main %in% c("En estudio", "Sin trastorno", "(NA)", NA)]
+  }
+  
+  if(length(dsm_main) > 100) {
+    cat("Limitando DSM-IV a los 100 más frecuentes\n")
+    freq_dsm <- table(df$diagnostico_trs_psiquiatrico_dsm_iv)
+    dsm_main <- names(sort(freq_dsm, decreasing = TRUE))[1:min(100, length(freq_dsm))]
+    dsm_main <- dsm_main[!dsm_main %in% c("En estudio", "Sin trastorno", "(NA)", NA)]
+  }
+  
+  if(length(sustancias) > 50) {
+    cat("Limitando sustancias a las 50 más frecuentes\n")
+    freq_sust <- table(unlist(df[sust_cols]))
+    sustancias <- names(sort(freq_sust, decreasing = TRUE))[1:min(50, length(freq_sust))]
+    # Limpiar de nuevo después del filtrado
+    sustancias <- sustancias[!sustancias %in% c("(NA)", "Sin consumo", "Sin especificar",
+                                                "Sin sustancia principal (CIP-CRC)", NA)]
+  }
+  
+  # Crear matriz binaria
+  n_patients <- nrow(df)
+  n_features <- length(cie10_main) + length(dsm_main) + length(sustancias)
+  
+  cat("\nCreando matriz de", n_patients, "x", n_features, "\n")
+  
+  feature_matrix <- matrix(0, nrow = n_patients, ncol = n_features)
+  
+  # Crear nombres de columnas descriptivos
+  col_names <- c(
+    if(length(cie10_main) > 0) paste0("CIE10_", cie10_main) else character(),
+    if(length(dsm_main) > 0) paste0("DSM_", dsm_main) else character(),
+    if(length(sustancias) > 0) paste0("SUST_", sustancias) else character()
+  )
+  
+  colnames(feature_matrix) <- col_names
+  
+  cat("\nCodificando diagnósticos y sustancias en matriz binaria...\n")
+  
+  col_idx <- 1
+  
+  # Llenar matriz - CIE-10 (solo diagnóstico principal)
+  for(i in seq_along(cie10_main)) {
+    rows <- which(df$diagnostico_trs_psiquiatrico_cie_10 == cie10_main[i])
+    if(length(rows) > 0) feature_matrix[rows, col_idx] <- 1
+    col_idx <- col_idx + 1
+  }
+  
+  # DSM-IV (solo diagnóstico principal)
+  for(i in seq_along(dsm_main)) {
+    rows <- which(df$diagnostico_trs_psiquiatrico_dsm_iv == dsm_main[i])
+    if(length(rows) > 0) feature_matrix[rows, col_idx] <- 1
+    col_idx <- col_idx + 1
+  }
+  
+  # Sustancias (todas las columnas)
+  for(i in seq_along(sustancias)) {
+    for(col in sust_cols) {
+      rows <- which(df[[col]] == sustancias[i])
+      if(length(rows) > 0) feature_matrix[rows, col_idx] <- 1
+    }
+    col_idx <- col_idx + 1
+  }
+  
+  # Eliminar columnas con muy pocas observaciones
+  col_sums <- colSums(feature_matrix)
+  min_obs <- max(30, n_patients * 0.001)  # Mínimo 30 casos o 0.1% de la muestra
+  keep_cols <- col_sums >= min_obs
+  
+  cat("\nEliminando", sum(!keep_cols), "características con menos de", min_obs, "casos\n")
+  
+  feature_matrix <- feature_matrix[, keep_cols]
+  col_names <- col_names[keep_cols]
+  colnames(feature_matrix) <- col_names
+  
+  # Imprimir estadísticas de la matriz
+  cat("\nEstadísticas de la matriz final:\n")
+  cat("- Dimensiones:", nrow(feature_matrix), "x", ncol(feature_matrix), "\n")
+  cat("- Densidad:", round(mean(feature_matrix), 4), "\n")
+  
+  # Mostrar distribución por tipo
+  n_cie10 <- sum(grepl("^CIE10_", col_names))
+  n_dsm <- sum(grepl("^DSM_", col_names))
+  n_sust <- sum(grepl("^SUST_", col_names))
+  
+  cat("\nDistribución de características:\n")
+  cat("- Diagnósticos CIE-10:", n_cie10, "\n")
+  cat("- Diagnósticos DSM-IV:", n_dsm, "\n")
+  cat("- Sustancias:", n_sust, "\n")
+  
+  # Convertir a sparse matrix para eficiencia
+  feature_matrix <- Matrix(feature_matrix, sparse = TRUE)
+  
+  # Calcular matriz de correlación
+  cat("\nCalculando correlaciones...\n")
+  correlation_matrix <- cor(as.matrix(feature_matrix), use = "pairwise.complete.obs")
+  
+  # Manejar NAs y valores infinitos
+  correlation_matrix[is.na(correlation_matrix)] <- 0
+  correlation_matrix[is.infinite(correlation_matrix)] <- 0
+  diag(correlation_matrix) <- 1
+  
+  return(list(
+    feature_matrix = feature_matrix,
+    correlation = correlation_matrix,
+    feature_names = col_names,
+    n_patients = n_patients
+  ))
+}
+
+# ================================================================================
+# 3. ESTIMACIÓN DE RED CON PARÁMETROS OPTIMIZADOS
+# ================================================================================
+
+estimate_comorbidity_network <- function(comorbidity_data, lambda = NULL, gamma = 0.25) {
+  
+  cat("\n=== Estimando red de comorbilidad con Graphical LASSO ===\n")
+  
+  correlation_matrix <- comorbidity_data$correlation
+  
+  # Verificar y limpiar matriz
+  if(any(is.na(correlation_matrix))) {
+    correlation_matrix[is.na(correlation_matrix)] <- 0
+  }
+  
+  # Asegurar simetría
+  correlation_matrix <- (correlation_matrix + t(correlation_matrix)) / 2
+  diag(correlation_matrix) <- 1
+  
+  if(is.null(lambda)) {
+    cat("Seleccionando lambda óptimo mediante EBIC...\n")
+    cat("Usando gamma =", gamma, "(valor más bajo para redes menos sparse)\n")
+    
+    tryCatch({
+      network <- qgraph::EBICglasso(
+        correlation_matrix,
+        n = comorbidity_data$n_patients,
+        gamma = gamma,  # Gamma más bajo para permitir más conexiones
+        threshold = TRUE,
+        returnAllResults = TRUE,
+        checkPD = TRUE
+      )
+      
+      cat("Lambda seleccionado:", network$lambda, "\n")
+      
+      # Verificar sparsidad
+      sparsity <- mean(network$optnet == 0)
+      cat("Sparsidad de la red:", round(sparsity * 100, 2), "%\n")
+      
+      # Si la red es demasiado sparse, ajustar
+      if(sparsity > 0.95) {
+        cat("Red demasiado sparse, reduciendo penalización...\n")
+        network <- qgraph::EBICglasso(
+          correlation_matrix,
+          n = comorbidity_data$n_patients,
+          gamma = 0,  # Sin penalización adicional
+          threshold = FALSE,
+          returnAllResults = TRUE,
+          checkPD = TRUE
+        )
+        sparsity <- mean(network$optnet == 0)
+        cat("Nueva sparsidad:", round(sparsity * 100, 2), "%\n")
+      }
+      
+    }, error = function(e) {
+      cat("Error en EBICglasso:", e$message, "\n")
+      cat("Usando threshold manual\n")
+      
+      threshold_val = 0.05  # Umbral más bajo para capturar más conexiones
+      partial_cor <- correlation_matrix
+      partial_cor[abs(partial_cor) < threshold_val] <- 0
+      
+      network <- list(
+        optnet = partial_cor,
+        lambda = threshold_val
+      )
+    })
+  }
+  
+  # Extraer matriz de pesos
+  weights_matrix <- network$optnet
+  
+  # Crear objeto igraph
+  g <- graph_from_adjacency_matrix(
+    abs(weights_matrix),
+    mode = "undirected",
+    weighted = TRUE,
+    diag = FALSE
+  )
+  
+  # Agregar atributos a los nodos
+  V(g)$name <- comorbidity_data$feature_names
+  
+  V(g)$type <- case_when(
+    grepl("^CIE10_", V(g)$name) ~ "CIE-10",
+    grepl("^DSM_", V(g)$name) ~ "DSM-IV",
+    grepl("^SUST_", V(g)$name) ~ "Sustancia",
+    TRUE ~ "Otro"
+  )
+  
+  prevalence <- colSums(comorbidity_data$feature_matrix) / comorbidity_data$n_patients
+  V(g)$prevalence <- as.numeric(prevalence)
+  
+  # Eliminar nodos aislados solo si son muchos
+  isolated <- which(degree(g) == 0)
+  if(length(isolated) > 0) {
+    cat("Nodos aislados encontrados:", length(isolated), "\n")
+    
+    if(length(isolated) > vcount(g) * 0.3) {
+      cat("Eliminando nodos aislados (>30% del total)\n")
+      g <- delete.vertices(g, isolated)
+      weights_matrix <- weights_matrix[-isolated, -isolated]
+    } else {
+      cat("Manteniendo nodos aislados (<30% del total)\n")
+    }
+  }
+  
+  # Información sobre la red
+  cat("\nCaracterísticas de la red:\n")
+  cat("- Nodos:", vcount(g), "\n")
+  cat("- Aristas:", ecount(g), "\n")
+  cat("- Densidad:", round(edge_density(g), 4), "\n")
+  cat("- Componentes conectados:", components(g)$no, "\n")
+  
+  # Distribución de nodos por tipo
+  type_counts <- table(V(g)$type)
+  cat("\nNodos por tipo:\n")
+  print(type_counts)
+  
+  return(list(
+    graph = g,
+    weights = weights_matrix,
+    glasso_results = network
+  ))
+}
+
+# El resto de las funciones permanecen igual...
+# (calculate_centrality_metrics, detect_communities, visualize_comorbidity_network, etc.)
+# Solo incluyo la función principal modificada:
+
+# ================================================================================
+# FUNCIÓN PRINCIPAL MODIFICADA
+# ================================================================================
+
+run_comorbidity_analysis <- function(data_input, output_dir = "comorbidity_results", 
+                                    use_gamma = 0.25) {
+  
+  # Crear directorio de salida
+  if(!dir.exists(output_dir)) {
+    dir.create(output_dir, recursive = TRUE)
+  }
+  
+  # Guardar directorio actual
+  original_dir <- getwd()
+  setwd(output_dir)
+  
+  cat("\n")
+  cat("========================================================\n")
+  cat("  ANÁLISIS DE REDES - DIAGNÓSTICOS PRINCIPALES\n")
+  cat("========================================================\n")
+  cat("Configuración:\n")
+  cat("- Usando solo diagnósticos principales CIE-10 y DSM-IV\n")
+  cat("- Incluyendo todas las sustancias sin agrupar\n")
+  cat("- Gamma para EBIC:", use_gamma, "\n")
+  cat("========================================================\n")
+  
+  start_time <- Sys.time()
+  
+  tryCatch({
+    # 1. Preparar datos
+    df <- prepare_comorbidity_data(data_input)
+    
+    # 2. Crear matriz de comorbilidad
+    comorbidity_data <- create_comorbidity_matrix(df)
+    
+    if(ncol(comorbidity_data$correlation) < 2) {
+      stop("Insuficientes características para construir una red")
+    }
+    
+    # 3. Estimar red con gamma ajustable
+    network <- estimate_comorbidity_network(comorbidity_data, gamma = use_gamma)
+    
+    # 4. Calcular centralidad
+    centrality <- calculate_centrality_metrics(network)
+    
+    # 5. Detectar comunidades
+    communities <- detect_communities(network)
+    
+    # 6. Visualizar
+    vis_network <- visualize_comorbidity_network(network, centrality, communities,
+                                                filter_threshold = 0.05)  # Umbral más bajo
+    
+    # 7. Análisis adicional de prevalencias
+    cat("\n=== Top 10 diagnósticos CIE-10 por prevalencia ===\n")
+    cie10_prev <- centrality %>%
+      filter(type == "CIE-10") %>%
+      arrange(desc(prevalence)) %>%
+      head(10) %>%
+      mutate(
+        label = gsub("^CIE10_", "", node),
+        prevalence_pct = round(prevalence * 100, 2)
+      )
+    print(cie10_prev[, c("label", "prevalence_pct")])
+    
+    cat("\n=== Top 10 diagnósticos DSM-IV por prevalencia ===\n")
+    dsm_prev <- centrality %>%
+      filter(type == "DSM-IV") %>%
+      arrange(desc(prevalence)) %>%
+      head(10) %>%
+      mutate(
+        label = gsub("^DSM_", "", node),
+        prevalence_pct = round(prevalence * 100, 2)
+      )
+    print(dsm_prev[, c("label", "prevalence_pct")])
+    
+    cat("\n=== Top 10 sustancias por prevalencia ===\n")
+    sust_prev <- centrality %>%
+      filter(type == "Sustancia") %>%
+      arrange(desc(prevalence)) %>%
+      head(10) %>%
+      mutate(
+        label = gsub("^SUST_", "", node),
+        prevalence_pct = round(prevalence * 100, 2)
+      )
+    print(sust_prev[, c("label", "prevalence_pct")])
+    
+    # Guardar resultados
+    cat("\n=== Guardando resultados ===\n")
+    
+    write.csv(centrality, "centrality_metrics.csv", row.names = FALSE)
+    write.csv(communities$summary, "community_summary.csv", row.names = FALSE)
+    
+    # Resumen detallado
+    summary_report <- list(
+      n_patients = comorbidity_data$n_patients,
+      n_nodes = vcount(network$graph),
+      n_edges = ecount(network$graph),
+      density = edge_density(network$graph),
+      transitivity = transitivity(network$graph),
+      modularity = communities$modularity,
+      n_communities = length(unique(V(network$graph)$community)),
+      nodes_by_type = table(V(network$graph)$type),
+      top_central_nodes = head(centrality, 15),
+      execution_time = Sys.time() - start_time,
+      configuration = list(
+        gamma = use_gamma,
+        diagnostic_types = "principales",
+        substances = "todas"
+      )
+    )
+    
+    saveRDS(summary_report, "analysis_summary.rds")
+    
+    # Imprimir resumen
+    cat("\n========================================================\n")
+    cat("  RESUMEN DEL ANÁLISIS\n")
+    cat("========================================================\n")
+    cat("Pacientes analizados:", summary_report$n_patients, "\n")
+    cat("Nodos en la red:", summary_report$n_nodes, "\n")
+    cat("Aristas en la red:", summary_report$n_edges, "\n")
+    cat("Densidad de la red:", round(summary_report$density, 4), "\n")
+    cat("Modularidad:", round(summary_report$modularity, 3), "\n")
+    cat("\n=== Top 5 nodos más centrales (por strength) ===\n")
+    print(head(centrality[, c("node", "type", "strength", "prevalence")], 5))
+    
+    cat("\n========================================================\n")
+    cat("  ANÁLISIS COMPLETADO\n")
+    cat("========================================================\n")
+    
+    return(list(
+      network = network,
+      centrality = centrality,
+      communities = communities,
+      summary = summary_report
+    ))
+    
+  }, error = function(e) {
+    cat("\nError durante el análisis:", e$message, "\n")
+    setwd(original_dir)
+    stop(e)
+  }, finally = {
+    setwd(original_dir)
+  })
+}
+
+# ================================================================================
+# EJECUTAR ANÁLISIS
+# ================================================================================
+
+# Ejecutar análisis con configuración para diagnósticos principales
+results <- run_comorbidity_analysis(
+  data_input = data,
+  output_dir = "comorbidity_analysis_main_diagnoses",
+  use_gamma = 0.25  # Puedes ajustar este valor: 0 = más conexiones, 0.5 = menos conexiones
+)
+```
+
+```{r}
+# ================================================================================
+# ANÁLISIS DE REDES DE COMORBILIDAD - CIE-10 + SUSTANCIAS
+# Dataset: 223,061 pacientes en rehabilitación de drogas en Chile
+# Configuración: Solo diagnósticos CIE-10 principales y todas las sustancias
+# ================================================================================
+
+# ================================================================================
+# 1. PREPARACIÓN DE DATOS
+# ================================================================================
+
+prepare_comorbidity_data <- function(data_input) {
+  
+  cat("Preparando datos para análisis de comorbilidad (CIE-10 + Sustancias)...\n")
+  cat("Dimensiones del dataset:", nrow(data_input), "x", ncol(data_input), "\n")
+  
+  # Variables relevantes - SOLO CIE-10 y SUSTANCIAS
+  comorbidity_vars <- c(
+    # Solo diagnóstico principal CIE-10
+    "diagnostico_trs_psiquiatrico_cie_10",
+    # Todas las sustancias
+    "sustancia_principal",
+    "otras_sustancias_no1",
+    "otras_sustancias_no2",
+    "otras_sustancias_no3",
+    # Variables demográficas
+    "sexo", "edad", "tipo_centro",
+    "fecha_ingresoa_tratamiento"
+  )
+  
+  # Verificar qué variables están disponibles
+  available_vars <- comorbidity_vars[comorbidity_vars %in% names(data_input)]
+  missing_vars <- comorbidity_vars[!comorbidity_vars %in% names(data_input)]
+  
+  if(length(missing_vars) > 0) {
+    cat("\nVariables no encontradas (se omitirán):\n")
+    print(missing_vars)
+  }
+  
+  # Seleccionar solo las variables disponibles
+  df <- data_input %>% 
+    select(all_of(available_vars))
+  
+  # Convertir factores a character para procesamiento más fácil
+  df <- df %>%
+    mutate(across(where(is.factor), as.character))
+  
+  return(df)
+}
+
+# ================================================================================
+# 2. CONSTRUCCIÓN DE MATRIZ DE COMORBILIDAD - CIE-10 + SUSTANCIAS
+# ================================================================================
+
+create_comorbidity_matrix <- function(df) {
+  
+  cat("\n=== Construyendo matriz de comorbilidad (CIE-10 + Sustancias) ===\n")
+  
+  # SOLO diagnóstico principal CIE-10
+  cie10_vals <- unique(df$diagnostico_trs_psiquiatrico_cie_10)
+  cie10_main <- cie10_vals[!is.na(cie10_vals) & 
+                           !cie10_vals %in% c("En estudio", "Sin trastorno", "(NA)")]
+  
+  # Obtener TODAS las sustancias únicas (sin agrupar)
+  sust_cols <- c("sustancia_principal", "otras_sustancias_no1", 
+                 "otras_sustancias_no2", "otras_sustancias_no3")
+  sust_cols <- sust_cols[sust_cols %in% names(df)]
+  
+  sustancias <- character()
+  for(col in sust_cols) {
+    vals <- unique(df[[col]])
+    # Limpiar valores NA y vacíos
+    vals <- vals[!is.na(vals) & 
+                !vals %in% c("(NA)", "Sin consumo", "Sin especificar",
+                           "Sin sustancia principal (CIP-CRC)")]
+    sustancias <- unique(c(sustancias, vals))
+  }
+  
+  cat("Diagnósticos principales CIE-10 encontrados:", length(cie10_main), "\n")
+  cat("Sustancias únicas encontradas:", length(sustancias), "\n")
+  
+  # Limitar número si es necesario
+  if(length(cie10_main) > 100) {
+    cat("Limitando CIE-10 a los 100 más frecuentes\n")
+    freq_cie10 <- table(df$diagnostico_trs_psiquiatrico_cie_10)
+    cie10_main <- names(sort(freq_cie10, decreasing = TRUE))[1:min(100, length(freq_cie10))]
+    cie10_main <- cie10_main[!cie10_main %in% c("En estudio", "Sin trastorno", "(NA)", NA)]
+  }
+  
+  if(length(sustancias) > 50) {
+    cat("Limitando sustancias a las 50 más frecuentes\n")
+    freq_sust <- table(unlist(df[sust_cols]))
+    sustancias <- names(sort(freq_sust, decreasing = TRUE))[1:min(50, length(freq_sust))]
+    # Limpiar de nuevo después del filtrado
+    sustancias <- sustancias[!sustancias %in% c("(NA)", "Sin consumo", "Sin especificar",
+                                                "Sin sustancia principal (CIP-CRC)", NA)]
+  }
+  
+  # Crear matriz binaria
+  n_patients <- nrow(df)
+  n_features <- length(cie10_main) + length(sustancias)
+  
+  cat("\nCreando matriz de", n_patients, "x", n_features, "\n")
+  
+  feature_matrix <- matrix(0, nrow = n_patients, ncol = n_features)
+  
+  # Crear nombres de columnas descriptivos
+  col_names <- c(
+    if(length(cie10_main) > 0) paste0("CIE10_", cie10_main) else character(),
+    if(length(sustancias) > 0) paste0("SUST_", sustancias) else character()
+  )
+  
+  colnames(feature_matrix) <- col_names
+  
+  cat("\nCodificando diagnósticos y sustancias en matriz binaria...\n")
+  
+  col_idx <- 1
+  
+  # Llenar matriz - CIE-10 (solo diagnóstico principal)
+  for(i in seq_along(cie10_main)) {
+    rows <- which(df$diagnostico_trs_psiquiatrico_cie_10 == cie10_main[i])
+    if(length(rows) > 0) feature_matrix[rows, col_idx] <- 1
+    col_idx <- col_idx + 1
+  }
+  
+  # Sustancias (todas las columnas)
+  for(i in seq_along(sustancias)) {
+    for(col in sust_cols) {
+      rows <- which(df[[col]] == sustancias[i])
+      if(length(rows) > 0) feature_matrix[rows, col_idx] <- 1
+    }
+    col_idx <- col_idx + 1
+  }
+  
+  # Eliminar columnas con muy pocas observaciones
+  col_sums <- colSums(feature_matrix)
+  min_obs <- max(30, n_patients * 0.001)  # Mínimo 30 casos o 0.1% de la muestra
+  keep_cols <- col_sums >= min_obs
+  
+  cat("\nEliminando", sum(!keep_cols), "características con menos de", min_obs, "casos\n")
+  
+  feature_matrix <- feature_matrix[, keep_cols]
+  col_names <- col_names[keep_cols]
+  colnames(feature_matrix) <- col_names
+  
+  # Imprimir estadísticas de la matriz
+  cat("\nEstadísticas de la matriz final:\n")
+  cat("- Dimensiones:", nrow(feature_matrix), "x", ncol(feature_matrix), "\n")
+  cat("- Densidad:", round(mean(feature_matrix), 4), "\n")
+  
+  # Mostrar distribución por tipo
+  n_cie10 <- sum(grepl("^CIE10_", col_names))
+  n_sust <- sum(grepl("^SUST_", col_names))
+  
+  cat("\nDistribución de características:\n")
+  cat("- Diagnósticos CIE-10:", n_cie10, "\n")
+  cat("- Sustancias:", n_sust, "\n")
+  
+  # Convertir a sparse matrix para eficiencia
+  feature_matrix <- Matrix(feature_matrix, sparse = TRUE)
+  
+  # Calcular matriz de correlación
+  cat("\nCalculando correlaciones...\n")
+  correlation_matrix <- cor(as.matrix(feature_matrix), use = "pairwise.complete.obs")
+  
+  # Manejar NAs y valores infinitos
+  correlation_matrix[is.na(correlation_matrix)] <- 0
+  correlation_matrix[is.infinite(correlation_matrix)] <- 0
+  diag(correlation_matrix) <- 1
+  
+  return(list(
+    feature_matrix = feature_matrix,
+    correlation = correlation_matrix,
+    feature_names = col_names,
+    n_patients = n_patients
+  ))
+}
+
+# ================================================================================
+# 3. ESTIMACIÓN DE RED CON PARÁMETROS OPTIMIZADOS
+# ================================================================================
+
+estimate_comorbidity_network <- function(comorbidity_data, lambda = NULL, gamma = 0.25) {
+  
+  cat("\n=== Estimando red de comorbilidad con Graphical LASSO ===\n")
+  
+  correlation_matrix <- comorbidity_data$correlation
+  
+  # Verificar y limpiar matriz
+  if(any(is.na(correlation_matrix))) {
+    correlation_matrix[is.na(correlation_matrix)] <- 0
+  }
+  
+  # Asegurar simetría
+  correlation_matrix <- (correlation_matrix + t(correlation_matrix)) / 2
+  diag(correlation_matrix) <- 1
+  
+  if(is.null(lambda)) {
+    cat("Seleccionando lambda óptimo mediante EBIC...\n")
+    cat("Usando gamma =", gamma, "(valor más bajo para redes menos sparse)\n")
+    
+    tryCatch({
+      network <- qgraph::EBICglasso(
+        correlation_matrix,
+        n = comorbidity_data$n_patients,
+        gamma = gamma,  # Gamma más bajo para permitir más conexiones
+        threshold = TRUE,
+        returnAllResults = TRUE,
+        checkPD = TRUE
+      )
+      
+      cat("Lambda seleccionado:", network$lambda, "\n")
+      
+      # Verificar sparsidad
+      sparsity <- mean(network$optnet == 0)
+      cat("Sparsidad de la red:", round(sparsity * 100, 2), "%\n")
+      
+      # Si la red es demasiado sparse, ajustar
+      if(sparsity > 0.95) {
+        cat("Red demasiado sparse, reduciendo penalización...\n")
+        network <- qgraph::EBICglasso(
+          correlation_matrix,
+          n = comorbidity_data$n_patients,
+          gamma = 0,  # Sin penalización adicional
+          threshold = FALSE,
+          returnAllResults = TRUE,
+          checkPD = TRUE
+        )
+        sparsity <- mean(network$optnet == 0)
+        cat("Nueva sparsidad:", round(sparsity * 100, 2), "%\n")
+      }
+      
+    }, error = function(e) {
+      cat("Error en EBICglasso:", e$message, "\n")
+      cat("Usando threshold manual\n")
+      
+      threshold_val = 0.05  # Umbral más bajo para capturar más conexiones
+      partial_cor <- correlation_matrix
+      partial_cor[abs(partial_cor) < threshold_val] <- 0
+      
+      network <- list(
+        optnet = partial_cor,
+        lambda = threshold_val
+      )
+    })
+  }
+  
+  # Extraer matriz de pesos
+  weights_matrix <- network$optnet
+  
+  # Crear objeto igraph
+  g <- graph_from_adjacency_matrix(
+    abs(weights_matrix),
+    mode = "undirected",
+    weighted = TRUE,
+    diag = FALSE
+  )
+  
+  # Agregar atributos a los nodos
+  V(g)$name <- comorbidity_data$feature_names
+  
+  V(g)$type <- case_when(
+    grepl("^CIE10_", V(g)$name) ~ "CIE-10",
+    grepl("^SUST_", V(g)$name) ~ "Sustancia",
+    TRUE ~ "Otro"
+  )
+  
+  prevalence <- colSums(comorbidity_data$feature_matrix) / comorbidity_data$n_patients
+  V(g)$prevalence <- as.numeric(prevalence)
+  
+  # Eliminar nodos aislados solo si son muchos
+  isolated <- which(degree(g) == 0)
+  if(length(isolated) > 0) {
+    cat("Nodos aislados encontrados:", length(isolated), "\n")
+    
+    if(length(isolated) > vcount(g) * 0.3) {
+      cat("Eliminando nodos aislados (>30% del total)\n")
+      g <- delete.vertices(g, isolated)
+      weights_matrix <- weights_matrix[-isolated, -isolated]
+    } else {
+      cat("Manteniendo nodos aislados (<30% del total)\n")
+    }
+  }
+  
+  # Información sobre la red
+  cat("\nCaracterísticas de la red:\n")
+  cat("- Nodos:", vcount(g), "\n")
+  cat("- Aristas:", ecount(g), "\n")
+  cat("- Densidad:", round(edge_density(g), 4), "\n")
+  cat("- Componentes conectados:", components(g)$no, "\n")
+  
+  # Distribución de nodos por tipo
+  type_counts <- table(V(g)$type)
+  cat("\nNodos por tipo:\n")
+  print(type_counts)
+  
+  return(list(
+    graph = g,
+    weights = weights_matrix,
+    glasso_results = network
+  ))
+}
+
+# ================================================================================
+# 4. CÁLCULO DE MÉTRICAS DE CENTRALIDAD
+# ================================================================================
+
+calculate_centrality_metrics <- function(network) {
+  
+  cat("\n=== Calculando métricas de centralidad ===\n")
+  
+  g <- network$graph
+  
+  # Calcular diferentes métricas de centralidad
+  centrality_df <- data.frame(
+    node = V(g)$name,
+    type = V(g)$type,
+    prevalence = V(g)$prevalence,
+    degree = degree(g),
+    strength = strength(g),
+    betweenness = betweenness(g, normalized = TRUE),
+    closeness = closeness(g, normalized = TRUE),
+    eigenvector = eigen_centrality(g)$vector,
+    stringsAsFactors = FALSE
+  )
+  
+  # Agregar rango para cada métrica
+  centrality_df <- centrality_df %>%
+    mutate(
+      degree_rank = rank(-degree),
+      strength_rank = rank(-strength),
+      betweenness_rank = rank(-betweenness),
+      closeness_rank = rank(-closeness),
+      eigenvector_rank = rank(-eigenvector)
+    )
+  
+  # Ordenar por strength (más relevante para redes ponderadas)
+  centrality_df <- centrality_df %>%
+    arrange(desc(strength))
+  
+  cat("Top 10 nodos por centralidad de fuerza (strength):\n")
+  print(head(centrality_df[, c("node", "type", "strength", "prevalence")], 10))
+  
+  return(centrality_df)
+}
+
+# ================================================================================
+# 5. DETECCIÓN DE COMUNIDADES
+# ================================================================================
+
+detect_communities <- function(network) {
+  
+  cat("\n=== Detectando comunidades ===\n")
+  
+  g <- network$graph
+  
+  # Usar múltiples algoritmos y comparar
+  cat("Probando diferentes algoritmos de detección de comunidades...\n")
+  
+  # Louvain
+  comm_louvain <- cluster_louvain(g, weights = E(g)$weight)
+  mod_louvain <- modularity(comm_louvain)
+  
+  # Walktrap
+  comm_walktrap <- cluster_walktrap(g, weights = E(g)$weight, steps = 4)
+  mod_walktrap <- modularity(comm_walktrap)
+  
+  # Fast greedy
+  comm_fastgreedy <- cluster_fast_greedy(g, weights = E(g)$weight)
+  mod_fastgreedy <- modularity(comm_fastgreedy)
+  
+  cat("Modularidad - Louvain:", round(mod_louvain, 3), "\n")
+  cat("Modularidad - Walktrap:", round(mod_walktrap, 3), "\n")
+  cat("Modularidad - Fast Greedy:", round(mod_fastgreedy, 3), "\n")
+  
+  # Seleccionar el mejor
+  best_comm <- comm_louvain
+  best_mod <- mod_louvain
+  best_method <- "Louvain"
+  
+  if(mod_walktrap > best_mod) {
+    best_comm <- comm_walktrap
+    best_mod <- mod_walktrap
+    best_method <- "Walktrap"
+  }
+  
+  if(mod_fastgreedy > best_mod) {
+    best_comm <- comm_fastgreedy
+    best_mod <- mod_fastgreedy
+    best_method <- "Fast Greedy"
+  }
+  
+  cat("\nMétodo seleccionado:", best_method, "con modularidad:", round(best_mod, 3), "\n")
+  
+  # Asignar comunidades a los nodos
+  V(g)$community <- membership(best_comm)
+  
+  # Crear resumen de comunidades
+  comm_summary <- data.frame(
+    node = V(g)$name,
+    type = V(g)$type,
+    community = V(g)$community,
+    stringsAsFactors = FALSE
+  )
+  
+  # Estadísticas por comunidad
+  comm_stats <- comm_summary %>%
+    group_by(community) %>%
+    summarise(
+      size = n(),
+      n_cie10 = sum(type == "CIE-10"),
+      n_sustancias = sum(type == "Sustancia"),
+      cie10_prop = n_cie10 / size,
+      sust_prop = n_sustancias / size
+    ) %>%
+    arrange(desc(size))
+  
+  cat("\nComunidades detectadas:", length(unique(V(g)$community)), "\n")
+  cat("\nEstadísticas de las comunidades principales:\n")
+  print(head(comm_stats, 10))
+  
+  # Analizar composición de las comunidades principales
+  for(i in 1:min(5, nrow(comm_stats))) {
+    comm_id <- comm_stats$community[i]
+    nodes_in_comm <- comm_summary %>%
+      filter(community == comm_id)
+    
+    cat("\n--- Comunidad", comm_id, "(n =", nrow(nodes_in_comm), ") ---\n")
+    
+    # Top CIE-10 en la comunidad
+    cie10_nodes <- nodes_in_comm %>%
+      filter(type == "CIE-10") %>%
+      head(5)
+    
+    if(nrow(cie10_nodes) > 0) {
+      cat("Top CIE-10:", paste(gsub("CIE10_", "", cie10_nodes$node), collapse = ", "), "\n")
+    }
+    
+    # Top Sustancias en la comunidad
+    sust_nodes <- nodes_in_comm %>%
+      filter(type == "Sustancia") %>%
+      head(5)
+    
+    if(nrow(sust_nodes) > 0) {
+      cat("Top Sustancias:", paste(gsub("SUST_", "", sust_nodes$node), collapse = ", "), "\n")
+    }
+  }
+  
+  return(list(
+    communities = best_comm,
+    method = best_method,
+    modularity = best_mod,
+    summary = comm_summary,
+    stats = comm_stats
+  ))
+}
+
+# ================================================================================
+# 6. VISUALIZACIÓN DE LA RED
+# ================================================================================
+
+visualize_comorbidity_network <- function(network, centrality, communities, 
+                                         filter_threshold = 0.1) {
+  
+  cat("\n=== Visualizando red de comorbilidad ===\n")
+  
+  g <- network$graph
+  
+  # Filtrar aristas débiles para mejor visualización
+  edges_to_keep <- which(E(g)$weight > filter_threshold)
+  g_vis <- subgraph.edges(g, edges_to_keep, delete.vertices = FALSE)
+  
+  cat("Aristas originales:", ecount(network$graph), "\n")
+  cat("Aristas después del filtro (>", filter_threshold, "):", ecount(g_vis), "\n")
+  
+  # Configurar colores por tipo
+  color_palette <- c(
+    "CIE-10" = "#FF6B6B",     # Rojo coral para diagnósticos
+    "Sustancia" = "#4ECDC4"    # Turquesa para sustancias
+  )
+  
+  V(g_vis)$color <- color_palette[V(g_vis)$type]
+  
+  # Tamaño basado en prevalencia
+  V(g_vis)$size <- sqrt(V(g_vis)$prevalence * 1000)
+  
+  # Etiquetas limpias
+  V(g_vis)$label <- gsub("^CIE10_", "", V(g_vis)$name)
+  V(g_vis)$label <- gsub("^SUST_", "", V(g_vis)$label)
+  
+  # Layout
+  layout <- layout_with_fr(g_vis, weights = E(g_vis)$weight)
+  
+  # Crear visualización
+  png("network_cie10_substances.png", width = 2400, height = 2400, res = 150)
+  
+  plot(g_vis,
+       layout = layout,
+       vertex.size = V(g_vis)$size,
+       vertex.color = V(g_vis)$color,
+       vertex.label = V(g_vis)$label,
+       vertex.label.cex = 0.7,
+       vertex.label.color = "black",
+       vertex.label.dist = 0.5,
+       edge.width = E(g_vis)$weight * 5,
+       edge.curved = 0.1,
+       edge.color = adjustcolor("gray50", alpha.f = 0.5),
+       main = "Red de Comorbilidad: CIE-10 + Sustancias",
+       sub = paste("Nodos:", vcount(g_vis), "| Aristas:", ecount(g_vis))
+  )
+  
+  # Leyenda
+  legend("topright", 
+         legend = names(color_palette),
+         fill = color_palette,
+         title = "Tipo de Nodo",
+         cex = 0.9)
+  
+  dev.off()
+  
+  cat("Visualización guardada como 'network_cie10_substances.png'\n")
+  
+  # Crear versión interactiva con visNetwork
+  tryCatch({
+    # Preparar datos para visNetwork
+    nodes <- data.frame(
+      id = V(g_vis)$name,
+      label = V(g_vis)$label,
+      group = V(g_vis)$type,
+      value = V(g_vis)$prevalence * 100,
+      title = paste0(V(g_vis)$label, "<br>",
+                    "Tipo: ", V(g_vis)$type, "<br>",
+                    "Prevalencia: ", round(V(g_vis)$prevalence * 100, 2), "%<br>",
+                    "Comunidad: ", V(g_vis)$community)
+    )
+    
+    edges <- data.frame(
+      from = get.edgelist(g_vis)[,1],
+      to = get.edgelist(g_vis)[,2],
+      value = E(g_vis)$weight,
+      title = paste0("Peso: ", round(E(g_vis)$weight, 3))
+    )
+    
+    # Crear visualización interactiva
+    vis_net <- visNetwork(nodes, edges) %>%
+      visGroups(groupname = "CIE-10", color = "#FF6B6B") %>%
+      visGroups(groupname = "Sustancia", color = "#4ECDC4") %>%
+      visOptions(
+        highlightNearest = list(enabled = TRUE, degree = 1, hover = TRUE),
+        selectedBy = "type"
+      ) %>%
+      visPhysics(
+        solver = "forceAtlas2Based",
+        forceAtlas2Based = list(
+          gravitationalConstant = -50,
+          centralGravity = 0.01,
+          springLength = 100,
+          springConstant = 0.08
+        )
+      ) %>%
+      visLayout(randomSeed = 123)
+    
+    # Guardar como HTML
+    visSave(vis_net, file = "network_interactive_cie10_substances.html")
+    cat("Visualización interactiva guardada como 'network_interactive_cie10_substances.html'\n")
+    
+    return(vis_net)
+    
+  }, error = function(e) {
+    cat("Error creando visualización interactiva:", e$message, "\n")
+    return(NULL)
+  })
+}
+
+# ================================================================================
+# FUNCIÓN PRINCIPAL - CIE-10 + SUSTANCIAS
+# ================================================================================
+
+run_comorbidity_analysis <- function(data_input, output_dir = "comorbidity_cie10_substances", 
+                                    use_gamma = 0.25) {
+  
+  # Crear directorio de salida
+  if(!dir.exists(output_dir)) {
+    dir.create(output_dir, recursive = TRUE)
+  }
+  
+  # Guardar directorio actual
+  original_dir <- getwd()
+  setwd(output_dir)
+  
+  cat("\n")
+  cat("================================================================\n")
+  cat("  ANÁLISIS DE REDES - CIE-10 + SUSTANCIAS\n")
+  cat("================================================================\n")
+  cat("Configuración:\n")
+  cat("- Usando solo diagnósticos principales CIE-10\n")
+  cat("- Incluyendo todas las sustancias sin agrupar\n")
+  cat("- Excluyendo diagnósticos DSM-IV\n")
+  cat("- Gamma para EBIC:", use_gamma, "\n")
+  cat("================================================================\n")
+  
+  start_time <- Sys.time()
+  
+  tryCatch({
+    # 1. Preparar datos
+    df <- prepare_comorbidity_data(data_input)
+    
+    # 2. Crear matriz de comorbilidad
+    comorbidity_data <- create_comorbidity_matrix(df)
+    
+    if(ncol(comorbidity_data$correlation) < 2) {
+      stop("Insuficientes características para construir una red")
+    }
+    
+    # 3. Estimar red con gamma ajustable
+    network <- estimate_comorbidity_network(comorbidity_data, gamma = use_gamma)
+    
+    # 4. Calcular centralidad
+    centrality <- calculate_centrality_metrics(network)
+    
+    # 5. Detectar comunidades
+    communities <- detect_communities(network)
+    
+    # 6. Visualizar
+    vis_network <- visualize_comorbidity_network(network, centrality, communities,
+                                                filter_threshold = 0.05)
+    
+    # 7. Análisis adicional de prevalencias y conexiones
+    cat("\n=== Top 15 diagnósticos CIE-10 por prevalencia ===\n")
+    cie10_prev <- centrality %>%
+      filter(type == "CIE-10") %>%
+      arrange(desc(prevalence)) %>%
+      head(15) %>%
+      mutate(
+        label = gsub("^CIE10_", "", node),
+        prevalence_pct = round(prevalence * 100, 2),
+        degree = degree,
+        strength = round(strength, 3)
+      )
+    print(cie10_prev[, c("label", "prevalence_pct", "degree", "strength")])
+    
+    cat("\n=== Top 15 sustancias por prevalencia ===\n")
+    sust_prev <- centrality %>%
+      filter(type == "Sustancia") %>%
+      arrange(desc(prevalence)) %>%
+      head(15) %>%
+      mutate(
+        label = gsub("^SUST_", "", node),
+        prevalence_pct = round(prevalence * 100, 2),
+        degree = degree,
+        strength = round(strength, 3)
+      )
+    print(sust_prev[, c("label", "prevalence_pct", "degree", "strength")])
+    
+    # 8. Análisis de conexiones CIE-10 <-> Sustancias
+    cat("\n=== Analizando conexiones entre CIE-10 y Sustancias ===\n")
+    
+    # Obtener matriz de adyacencia
+    adj_matrix <- as.matrix(get.adjacency(network$graph, attr = "weight"))
+    
+    # Identificar índices por tipo
+    cie10_idx <- which(V(network$graph)$type == "CIE-10")
+    sust_idx <- which(V(network$graph)$type == "Sustancia")
+    
+    # Extraer submatriz de conexiones CIE-10 <-> Sustancias
+    if(length(cie10_idx) > 0 && length(sust_idx) > 0) {
+      cross_connections <- adj_matrix[cie10_idx, sust_idx]
+      
+      # Encontrar las conexiones más fuertes
+      strong_connections <- which(cross_connections > 0.1, arr.ind = TRUE)
+      
+      if(nrow(strong_connections) > 0) {
+        connections_df <- data.frame(
+          cie10 = V(network$graph)$name[cie10_idx[strong_connections[,1]]],
+          sustancia = V(network$graph)$name[sust_idx[strong_connections[,2]]],
+          weight = cross_connections[strong_connections]
+        ) %>%
+          mutate(
+            cie10_clean = gsub("^CIE10_", "", cie10),
+            sustancia_clean = gsub("^SUST_", "", sustancia)
+          ) %>%
+          arrange(desc(weight))
+        
+        cat("\nTop 20 conexiones más fuertes CIE-10 <-> Sustancia:\n")
+        print(head(connections_df[, c("cie10_clean", "sustancia_clean", "weight")], 20))
+        
+        # Guardar todas las conexiones
+        write.csv(connections_df, "cie10_substance_connections.csv", row.names = FALSE)
+      }
+    }
+    
+    # Guardar resultados
+    cat("\n=== Guardando resultados ===\n")
+    
+    write.csv(centrality, "centrality_metrics.csv", row.names = FALSE)
+    write.csv(communities$summary, "community_summary.csv", row.names = FALSE)
+    write.csv(communities$stats, "community_statistics.csv", row.names = FALSE)
+    
+    # Resumen detallado
+    summary_report <- list(
+      n_patients = comorbidity_data$n_patients,
+      n_nodes = vcount(network$graph),
+      n_edges = ecount(network$graph),
+      density = edge_density(network$graph),
+      transitivity = transitivity(network$graph),
+      modularity = communities$modularity,
+      n_communities = length(unique(V(network$graph)$community)),
+      nodes_by_type = table(V(network$graph)$type),
+      top_central_nodes = head(centrality, 20),
+      execution_time = Sys.time() - start_time,
+      configuration = list(
+        gamma = use_gamma,
+        diagnostic_types = "CIE-10 principal",
+        substances = "todas",
+        dsm_included = FALSE
+      )
+    )
+    
+    saveRDS(summary_report, "analysis_summary.rds")
+    saveRDS(network, "network_object.rds")
+    saveRDS(communities, "communities_object.rds")
+    
+    # Imprimir resumen final
+    cat("\n================================================================\n")
+    cat("  RESUMEN DEL ANÁLISIS\n")
+    cat("================================================================\n")
+    cat("Pacientes analizados:", summary_report$n_patients, "\n")
+    cat("Nodos en la red:", summary_report$n_nodes, "\n")
+    cat("  - CIE-10:", summary_report$nodes_by_type["CIE-10"], "\n")
+    cat("  - Sustancias:", summary_report$nodes_by_type["Sustancia"], "\n")
+    cat("Aristas en la red:", summary_report$n_edges, "\n")
+    cat("Densidad de la red:", round(summary_report$density, 4), "\n")
+    cat("Transitividad:", round(summary_report$transitivity, 3), "\n")
+    cat("Modularidad:", round(summary_report$modularity, 3), "\n")
+    cat("Comunidades detectadas:", summary_report$n_communities, "\n")
+    
+    cat("\n=== Top 10 nodos más centrales (por strength) ===\n")
+    top_nodes <- head(centrality[, c("node", "type", "strength", "prevalence")], 10) %>%
+      mutate(
+        label = gsub("^CIE10_|^SUST_", "", node),
+        prevalence_pct = round(prevalence * 100, 2)
+      )
+    print(top_nodes[, c("label", "type", "strength", "prevalence_pct")])
+    
+    cat("\n================================================================\n")
+    cat("  ANÁLISIS COMPLETADO EXITOSAMENTE\n")
+    cat("================================================================\n")
+    cat("Tiempo de ejecución:", round(summary_report$execution_time, 2), units(summary_report$execution_time), "\n")
+    cat("Resultados guardados en:", output_dir, "\n")
+    
+    return(list(
+      network = network,
+      centrality = centrality,
+      communities = communities,
+      summary = summary_report
+    ))
+    
+  }, error = function(e) {
+    cat("\nError durante el análisis:", e$message, "\n")
+    setwd(original_dir)
+    stop(e)
+  }, finally = {
+    setwd(original_dir)
+  })
+}
+
+# ================================================================================
+# EJECUTAR ANÁLISIS
+# ================================================================================
+
+# Ejecutar análisis con configuración CIE-10 + Sustancias
+results <- run_comorbidity_analysis(
+  data_input = data,
+  output_dir = "comorbidity_cie10_substances_analysis",
+  use_gamma = 0.25  # Puedes ajustar: 0 = más conexiones, 0.5 = menos conexiones
+)
+```
+```{r}
+# ================================================================================
+# ANÁLISIS DE REDES DE COMORBILIDAD - SOLO CIE-10 (DATOS LONGITUDINALES)
+# Dataset: Pacientes únicos en rehabilitación de drogas en Chile
+# Unidad de análisis: HASH_KEY (sujeto único, puede tener múltiples registros)
+# ================================================================================
+
+# ================================================================================
+# 1. PREPARACIÓN DE DATOS LONGITUDINALES
+# ================================================================================
+
+prepare_longitudinal_comorbidity_data <- function(data_input) {
+  
+  cat("Preparando datos longitudinales para análisis de comorbilidad CIE-10...\n")
+  cat("Dimensiones del dataset original:", nrow(data_input), "x", ncol(data_input), "\n")
+  
+  # Verificar que existe HASH_KEY
+  if(!"HASH_KEY" %in% names(data_input)) {
+    stop("La variable HASH_KEY no existe en el dataset")
+  }
+  
+  # Variables relevantes para análisis CIE-10
+  comorbidity_vars <- c(
+    "HASH_KEY",  # Identificador único del sujeto
+    # Diagnósticos CIE-10 (principal y secundarios si existen)
+    "diagnostico_trs_psiquiatrico_cie_10",
+    "diagnostico_trs_psiquiatrico_cie_10_2",  # Si existe
+    "diagnostico_trs_psiquiatrico_cie_10_3",  # Si existe
+    # Sustancias (para análisis de comorbilidad con sustancias)
+    "sustancia_principal",
+    "otras_sustancias_no1",
+    "otras_sustancias_no2",
+    "otras_sustancias_no3",
+    # Variables demográficas y temporales
+    "sexo", "edad", "tipo_centro",
+    "fecha_ingresoa_tratamiento"
+  )
+  
+  # Verificar qué variables están disponibles
+  available_vars <- comorbidity_vars[comorbidity_vars %in% names(data_input)]
+  missing_vars <- comorbidity_vars[!comorbidity_vars %in% names(data_input)]
+  
+  if(length(missing_vars) > 0) {
+    cat("\nVariables no encontradas (se omitirán):\n")
+    print(missing_vars)
+  }
+  
+  # Seleccionar solo las variables disponibles
+  df <- data_input %>% 
+    select(all_of(available_vars))
+  
+  # Convertir factores a character
+  df <- df %>%
+    mutate(across(where(is.factor), as.character))
+  
+  # Información sobre datos longitudinales
+  n_total_registros <- nrow(df)
+  n_sujetos_unicos <- n_distinct(df$HASH_KEY)
+  registros_por_sujeto <- df %>%
+    group_by(HASH_KEY) %>%
+    summarise(n_registros = n()) %>%
+    pull(n_registros)
+  
+  cat("\n=== Estructura Longitudinal de los Datos ===\n")
+  cat("Total de registros:", n_total_registros, "\n")
+  cat("Sujetos únicos (HASH_KEY):", n_sujetos_unicos, "\n")
+  cat("Promedio de registros por sujeto:", round(mean(registros_por_sujeto), 2), "\n")
+  cat("Máximo de registros por sujeto:", max(registros_por_sujeto), "\n")
+  cat("Sujetos con múltiples registros:", sum(registros_por_sujeto > 1), 
+      "(", round(sum(registros_por_sujeto > 1)/n_sujetos_unicos * 100, 1), "%)\n")
+  
+  return(df)
+}
+
+# ================================================================================
+# 2. AGREGACIÓN DE DATOS LONGITUDINALES POR SUJETO
+# ================================================================================
+
+aggregate_longitudinal_data <- function(df) {
+  
+  cat("\n=== Agregando datos longitudinales por sujeto ===\n")
+  
+  # Identificar columnas de diagnóstico CIE-10 disponibles
+  cie10_cols <- grep("diagnostico_trs_psiquiatrico_cie_10", names(df), value = TRUE)
+  cat("Columnas CIE-10 encontradas:", paste(cie10_cols, collapse = ", "), "\n")
+  
+  # Identificar columnas de sustancias
+  sust_cols <- c("sustancia_principal", "otras_sustancias_no1", 
+                 "otras_sustancias_no2", "otras_sustancias_no3")
+  sust_cols <- sust_cols[sust_cols %in% names(df)]
+  
+  # Función para combinar diagnósticos de un sujeto
+  combine_diagnoses <- function(diagnoses) {
+    # Obtener todos los diagnósticos únicos del sujeto
+    all_diag <- unique(unlist(diagnoses))
+    # Eliminar NA y valores no válidos
+    all_diag <- all_diag[!is.na(all_diag) & 
+                        !all_diag %in% c("En estudio", "Sin trastorno", "(NA)")]
+    return(all_diag)
+  }
+  
+  # Agregar por sujeto
+  df_aggregated <- df %>%
+    group_by(HASH_KEY) %>%
+    summarise(
+      # Combinar todos los diagnósticos CIE-10 del sujeto
+      all_cie10_diagnoses = list(combine_diagnoses(across(all_of(cie10_cols)))),
+      
+      # Combinar todas las sustancias del sujeto
+      all_substances = list(unique(unlist(across(all_of(sust_cols))))),
+      
+      # Mantener características demográficas (tomar el primer valor o el más frecuente)
+      sexo = first(sexo),
+      edad_promedio = mean(edad, na.rm = TRUE),
+      edad_primera = first(edad),
+      edad_ultima = last(edad),
+      n_tratamientos = n(),
+      fecha_primer_ingreso = min(fecha_ingresoa_tratamiento, na.rm = TRUE),
+      fecha_ultimo_ingreso = max(fecha_ingresoa_tratamiento, na.rm = TRUE),
+      
+      .groups = 'drop'
+    )
+  
+  # Limpiar sustancias
+  df_aggregated <- df_aggregated %>%
+    mutate(
+      all_substances = map(all_substances, ~.[!. %in% c("(NA)", "Sin consumo", 
+                                                         "Sin especificar",
+                                                         "Sin sustancia principal (CIP-CRC)", 
+                                                         NA)])
+    )
+  
+  cat("Sujetos únicos después de agregación:", nrow(df_aggregated), "\n")
+  
+  # Estadísticas de diagnósticos por sujeto
+  n_diag_per_subject <- sapply(df_aggregated$all_cie10_diagnoses, length)
+  cat("\n=== Diagnósticos CIE-10 por sujeto ===\n")
+  cat("Promedio:", round(mean(n_diag_per_subject), 2), "\n")
+  cat("Mediana:", median(n_diag_per_subject), "\n")
+  cat("Máximo:", max(n_diag_per_subject), "\n")
+  cat("Sujetos sin diagnóstico CIE-10:", sum(n_diag_per_subject == 0), "\n")
+  cat("Sujetos con múltiples diagnósticos:", sum(n_diag_per_subject > 1), "\n")
+  
+  return(df_aggregated)
+}
+
+# ================================================================================
+# 3. CONSTRUCCIÓN DE MATRIZ DE COMORBILIDAD CIE-10
+# ================================================================================
+
+create_cie10_comorbidity_matrix <- function(df_aggregated, 
+                                           include_substances = TRUE,
+                                           min_prevalence = 0.001) {
+  
+  cat("\n=== Construyendo matriz de comorbilidad CIE-10 ===\n")
+  
+  # Obtener todos los diagnósticos CIE-10 únicos
+  all_cie10 <- unique(unlist(df_aggregated$all_cie10_diagnoses))
+  all_cie10 <- all_cie10[!is.na(all_cie10)]
+  
+  cat("Diagnósticos CIE-10 únicos encontrados:", length(all_cie10), "\n")
+  
+  features <- character()
+  
+  # Agregar diagnósticos CIE-10
+  if(length(all_cie10) > 0) {
+    # Calcular frecuencia de cada diagnóstico
+    diag_freq <- table(unlist(df_aggregated$all_cie10_diagnoses))
+    
+    # Filtrar por prevalencia mínima
+    min_cases <- max(10, nrow(df_aggregated) * min_prevalence)
+    cie10_keep <- names(diag_freq)[diag_freq >= min_cases]
+    
+    cat("Diagnósticos CIE-10 con al menos", min_cases, "casos:", 
+        length(cie10_keep), "\n")
+    
+    features <- c(features, paste0("CIE10_", cie10_keep))
+  }
+  
+  # Agregar sustancias si se solicita
+  if(include_substances) {
+    all_substances <- unique(unlist(df_aggregated$all_substances))
+    all_substances <- all_substances[!is.na(all_substances)]
+    
+    if(length(all_substances) > 0) {
+      # Calcular frecuencia
+      sust_freq <- table(unlist(df_aggregated$all_substances))
+      
+      # Filtrar por prevalencia
+      min_cases_sust <- max(30, nrow(df_aggregated) * min_prevalence)
+      sust_keep <- names(sust_freq)[sust_freq >= min_cases_sust]
+      
+      cat("Sustancias con al menos", min_cases_sust, "casos:", 
+          length(sust_keep), "\n")
+      
+      # Limitar a las 30 sustancias más frecuentes
+      if(length(sust_keep) > 30) {
+        sust_keep <- names(sort(sust_freq[sust_keep], decreasing = TRUE))[1:30]
+        cat("Limitando a las 30 sustancias más frecuentes\n")
+      }
+      
+      features <- c(features, paste0("SUST_", sust_keep))
+    }
+  }
+  
+  # Crear matriz binaria
+  n_subjects <- nrow(df_aggregated)
+  n_features <- length(features)
+  
+  cat("\nCreando matriz de", n_subjects, "x", n_features, "\n")
+  
+  feature_matrix <- matrix(0, nrow = n_subjects, ncol = n_features)
+  colnames(feature_matrix) <- features
+  
+  # Llenar matriz
+  cat("Codificando características en matriz binaria...\n")
+  
+  for(i in seq_len(n_subjects)) {
+    # Diagnósticos CIE-10 del sujeto
+    subject_cie10 <- df_aggregated$all_cie10_diagnoses[[i]]
+    if(length(subject_cie10) > 0) {
+      cie10_features <- paste0("CIE10_", subject_cie10)
+      cie10_matches <- which(features %in% cie10_features)
+      if(length(cie10_matches) > 0) {
+        feature_matrix[i, cie10_matches] <- 1
+      }
+    }
+    
+    # Sustancias del sujeto
+    if(include_substances) {
+      subject_sust <- df_aggregated$all_substances[[i]]
+      if(length(subject_sust) > 0) {
+        sust_features <- paste0("SUST_", subject_sust)
+        sust_matches <- which(features %in% sust_features)
+        if(length(sust_matches) > 0) {
+          feature_matrix[i, sust_matches] <- 1
+        }
+      }
+    }
+  }
+  
+  # Estadísticas de la matriz
+  cat("\n=== Estadísticas de la matriz ===\n")
+  cat("Dimensiones:", nrow(feature_matrix), "x", ncol(feature_matrix), "\n")
+  cat("Densidad:", round(mean(feature_matrix), 4), "\n")
+  cat("Sujetos con al menos un diagnóstico:", 
+      sum(rowSums(feature_matrix[, grepl("^CIE10_", features)]) > 0), "\n")
+  
+  # Distribución de comorbilidades
+  cie10_cols <- grepl("^CIE10_", features)
+  if(sum(cie10_cols) > 0) {
+    n_comorbidities <- rowSums(feature_matrix[, cie10_cols])
+    cat("\n=== Distribución de comorbilidades CIE-10 ===\n")
+    print(table(n_comorbidities))
+    cat("Promedio de diagnósticos por sujeto:", 
+        round(mean(n_comorbidities), 2), "\n")
+  }
+  
+  # Convertir a sparse matrix
+  feature_matrix <- Matrix(feature_matrix, sparse = TRUE)
+  
+  # Calcular matriz de correlación
+  cat("\nCalculando matriz de correlación...\n")
+  correlation_matrix <- cor(as.matrix(feature_matrix), use = "pairwise.complete.obs")
+  
+  # Limpiar matriz
+  correlation_matrix[is.na(correlation_matrix)] <- 0
+  correlation_matrix[is.infinite(correlation_matrix)] <- 0
+  diag(correlation_matrix) <- 1
+  
+  return(list(
+    feature_matrix = feature_matrix,
+    correlation = correlation_matrix,
+    feature_names = features,
+    n_subjects = n_subjects,
+    subject_data = df_aggregated
+  ))
+}
+
+# ================================================================================
+# 4. ANÁLISIS DE PATRONES TEMPORALES (OPCIONAL)
+# ================================================================================
+
+analyze_temporal_patterns <- function(df_aggregated, comorbidity_data) {
+  
+  cat("\n=== Análisis de Patrones Temporales ===\n")
+  
+  # Analizar relación entre número de tratamientos y comorbilidades
+  cie10_cols <- grepl("^CIE10_", comorbidity_data$feature_names)
+  
+  if(sum(cie10_cols) > 0) {
+    n_diagnoses <- rowSums(comorbidity_data$feature_matrix[, cie10_cols])
+    
+    temporal_analysis <- df_aggregated %>%
+      mutate(
+        n_diagnoses = n_diagnoses,
+        tiempo_en_sistema = as.numeric(difftime(fecha_ultimo_ingreso, 
+                                               fecha_primer_ingreso, 
+                                               units = "days"))
+      ) %>%
+      select(HASH_KEY, n_tratamientos, n_diagnoses, tiempo_en_sistema,
+             edad_primera, edad_ultima)
+    
+    # Correlación entre número de tratamientos y diagnósticos
+    cor_tratamientos <- cor(temporal_analysis$n_tratamientos, 
+                           temporal_analysis$n_diagnoses, 
+                           use = "complete.obs")
+    
+    cat("Correlación entre número de tratamientos y número de diagnósticos:", 
+        round(cor_tratamientos, 3), "\n")
+    
+    # Pacientes con trayectorias largas
+    long_trajectories <- temporal_analysis %>%
+      filter(n_tratamientos >= 3) %>%
+      arrange(desc(n_tratamientos))
+    
+    cat("\nPacientes con 3+ tratamientos:", nrow(long_trajectories), "\n")
+    cat("Promedio de diagnósticos en pacientes recurrentes:", 
+        round(mean(long_trajectories$n_diagnoses), 2), "\n")
+    
+    return(temporal_analysis)
+  }
+  
+  return(NULL)
+}
+
+# ================================================================================
+# 5. FUNCIÓN PRINCIPAL DE ANÁLISIS
+# ================================================================================
+
+run_cie10_comorbidity_analysis <- function(data_input, 
+                                          output_dir = "cie10_comorbidity_results",
+                                          include_substances = TRUE,
+                                          gamma = 0.25,
+                                          analyze_temporal = TRUE) {
+  
+  # Crear directorio de salida
+  if(!dir.exists(output_dir)) {
+    dir.create(output_dir, recursive = TRUE)
+  }
+  
+  original_dir <- getwd()
+  setwd(output_dir)
+  
+  cat("\n")
+  cat("================================================================\n")
+  cat("  ANÁLISIS DE REDES DE COMORBILIDAD CIE-10 (LONGITUDINAL)\n")
+  cat("================================================================\n")
+  cat("Configuración:\n")
+  cat("- Unidad de análisis: Sujeto único (HASH_KEY)\n")
+  cat("- Incluir sustancias:", include_substances, "\n")
+  cat("- Gamma para EBIC:", gamma, "\n")
+  cat("- Análisis temporal:", analyze_temporal, "\n")
+  cat("================================================================\n")
+  
+  start_time <- Sys.time()
+  
+  tryCatch({
+    # 1. Preparar datos longitudinales
+    df <- prepare_longitudinal_comorbidity_data(data_input)
+    
+    # 2. Agregar datos por sujeto
+    df_aggregated <- aggregate_longitudinal_data(df)
+    
+    # 3. Crear matriz de comorbilidad
+    comorbidity_data <- create_cie10_comorbidity_matrix(
+      df_aggregated, 
+      include_substances = include_substances
+    )
+    
+    if(ncol(comorbidity_data$correlation) < 2) {
+      stop("Insuficientes características para construir una red")
+    }
+    
+    # 4. Estimar red
+    network <- estimate_comorbidity_network(comorbidity_data, gamma = gamma)
+    
+    # 5. Calcular centralidad
+    centrality <- calculate_centrality_metrics(network)
+    
+    # 6. Detectar comunidades
+    communities <- detect_communities(network)
+    
+    # 7. Análisis temporal (si se solicita)
+    temporal_analysis <- NULL
+    if(analyze_temporal) {
+      temporal_analysis <- analyze_temporal_patterns(df_aggregated, comorbidity_data)
+    }
+    
+    # 8. Visualizar
+    vis_network <- visualize_comorbidity_network(
+      network, 
+      centrality, 
+      communities,
+      filter_threshold = 0.03
+    )
+    
+    # 9. Análisis específico de CIE-10
+    cat("\n=== Top 15 diagnósticos CIE-10 más prevalentes ===\n")
+    cie10_prev <- centrality %>%
+      filter(grepl("^CIE10_", node)) %>%
+      arrange(desc(prevalence)) %>%
+      head(15) %>%
+      mutate(
+        diagnosis = gsub("^CIE10_", "", node),
+        prevalence_pct = round(prevalence * 100, 2),
+        n_subjects = round(prevalence * comorbidity_data$n_subjects)
+      )
+    print(cie10_prev[, c("diagnosis", "n_subjects", "prevalence_pct", "degree", "strength")])
+    
+    # 10. Pares de comorbilidad más fuertes
+    cat("\n=== Top 20 pares de comorbilidad CIE-10 más fuertes ===\n")
+    
+    # Extraer pesos de aristas
+    edges_df <- as_data_frame(network$graph, what = "edges")
+    
+    # Obtener nombres de nodos
+    node_names <- V(network$graph)$name
+    
+    # Crear dataframe de aristas con nombres
+    strong_pairs <- edges_df %>%
+      mutate(
+        from_name = node_names[from],
+        to_name = node_names[to]
+      ) %>%
+      filter(grepl("^CIE10_", from_name) & grepl("^CIE10_", to_name)) %>%
+      arrange(desc(weight)) %>%
+      head(20) %>%
+      mutate(
+        from_diag = gsub("^CIE10_", "", from_name),
+        to_diag = gsub("^CIE10_", "", to_name),
+        weight = round(weight, 3)
+      )
+    
+    print(strong_pairs[, c("from_diag", "to_diag", "weight")])
+    
+    # Guardar resultados
+    cat("\n=== Guardando resultados ===\n")
+    
+    write.csv(centrality, "centrality_metrics_cie10.csv", row.names = FALSE)
+    write.csv(communities$summary, "community_summary_cie10.csv", row.names = FALSE)
+    write.csv(strong_pairs, "strongest_comorbidity_pairs.csv", row.names = FALSE)
+    
+    if(!is.null(temporal_analysis)) {
+      write.csv(temporal_analysis, "temporal_analysis.csv", row.names = FALSE)
+    }
+    
+    # Resumen
+    summary_report <- list(
+      n_total_records = nrow(df),
+      n_unique_subjects = comorbidity_data$n_subjects,
+      n_nodes = vcount(network$graph),
+      n_edges = ecount(network$graph),
+      n_cie10_nodes = sum(grepl("^CIE10_", V(network$graph)$name)),
+      n_substance_nodes = sum(grepl("^SUST_", V(network$graph)$name)),
+      density = edge_density(network$graph),
+      transitivity = transitivity(network$graph),
+      modularity = communities$modularity,
+      n_communities = length(unique(V(network$graph)$community)),
+      top_central_nodes = head(centrality, 20),
+      strongest_pairs = head(strong_pairs, 10),
+      execution_time = Sys.time() - start_time,
+      configuration = list(
+        gamma = gamma,
+        include_substances = include_substances,
+        analyze_temporal = analyze_temporal
+      )
+    )
+    
+    saveRDS(summary_report, "analysis_summary_cie10.rds")
+    saveRDS(network, "network_object.rds")
+    saveRDS(comorbidity_data, "comorbidity_data.rds")
+    
+    # Imprimir resumen final
+    cat("\n================================================================\n")
+    cat("  RESUMEN DEL ANÁLISIS\n")
+    cat("================================================================\n")
+    cat("Registros totales procesados:", summary_report$n_total_records, "\n")
+    cat("Sujetos únicos analizados:", summary_report$n_unique_subjects, "\n")
+    cat("Nodos en la red:", summary_report$n_nodes, "\n")
+    cat("  - Diagnósticos CIE-10:", summary_report$n_cie10_nodes, "\n")
+    cat("  - Sustancias:", summary_report$n_substance_nodes, "\n")
+    cat("Aristas en la red:", summary_report$n_edges, "\n")
+    cat("Densidad de la red:", round(summary_report$density, 4), "\n")
+    cat("Modularidad:", round(summary_report$modularity, 3), "\n")
+    cat("Comunidades detectadas:", summary_report$n_communities, "\n")
+    
+    cat("\n=== Top 5 nodos más centrales (por strength) ===\n")
+    top5 <- head(centrality[, c("node", "type", "strength", "prevalence")], 5) %>%
+      mutate(node = gsub("^(CIE10_|SUST_)", "", node))
+    print(top5)
+    
+    cat("\n================================================================\n")
+    cat("  ANÁLISIS COMPLETADO EXITOSAMENTE\n")
+    cat("================================================================\n")
+    
+    return(list(
+      network = network,
+      centrality = centrality,
+      communities = communities,
+      temporal = temporal_analysis,
+      summary = summary_report,
+      aggregated_data = df_aggregated
+    ))
+    
+  }, error = function(e) {
+    cat("\nError durante el análisis:", e$message, "\n")
+    setwd(original_dir)
+    stop(e)
+  }, finally = {
+    setwd(original_dir)
+  })
+}
+
+# ================================================================================
+# FUNCIONES AUXILIARES NECESARIAS (las mismas del código original)
+# ================================================================================
+
+# Función para estimar red (igual que el original)
+estimate_comorbidity_network <- function(comorbidity_data, lambda = NULL, gamma = 0.25) {
+  
+  cat("\n=== Estimando red de comorbilidad con Graphical LASSO ===\n")
+  
+  correlation_matrix <- comorbidity_data$correlation
+  
+  # Verificar y limpiar matriz
+  if(any(is.na(correlation_matrix))) {
+    correlation_matrix[is.na(correlation_matrix)] <- 0
+  }
+  
+  # Asegurar simetría
+  correlation_matrix <- (correlation_matrix + t(correlation_matrix)) / 2
+  diag(correlation_matrix) <- 1
+  
+  if(is.null(lambda)) {
+    cat("Seleccionando lambda óptimo mediante EBIC...\n")
+    cat("Usando gamma =", gamma, "\n")
+    
+    tryCatch({
+      network <- qgraph::EBICglasso(
+        correlation_matrix,
+        n = comorbidity_data$n_subjects,  # Usar n_subjects en lugar de n_patients
+        gamma = gamma,
+        threshold = TRUE,
+        returnAllResults = TRUE,
+        checkPD = TRUE
+      )
+      
+      cat("Lambda seleccionado:", network$lambda, "\n")
+      
+      # Verificar sparsidad
+      sparsity <- mean(network$optnet == 0)
+      cat("Sparsidad de la red:", round(sparsity * 100, 2), "%\n")
+      
+      # Si la red es demasiado sparse, ajustar
+      if(sparsity > 0.95) {
+        cat("Red demasiado sparse, reduciendo penalización...\n")
+        network <- qgraph::EBICglasso(
+          correlation_matrix,
+          n = comorbidity_data$n_subjects,
+          gamma = 0,
+          threshold = FALSE,
+          returnAllResults = TRUE,
+          checkPD = TRUE
+        )
+        sparsity <- mean(network$optnet == 0)
+        cat("Nueva sparsidad:", round(sparsity * 100, 2), "%\n")
+      }
+      
+    }, error = function(e) {
+      cat("Error en EBICglasso:", e$message, "\n")
+      cat("Usando threshold manual\n")
+      
+      threshold_val = 0.05
+      partial_cor <- correlation_matrix
+      partial_cor[abs(partial_cor) < threshold_val] <- 0
+      
+      network <- list(
+        optnet = partial_cor,
+        lambda = threshold_val
+      )
+    })
+  }
+  
+  # Extraer matriz de pesos
+  weights_matrix <- network$optnet
+  
+  # Crear objeto igraph
+  g <- graph_from_adjacency_matrix(
+    abs(weights_matrix),
+    mode = "undirected",
+    weighted = TRUE,
+    diag = FALSE
+  )
+  
+  # Agregar atributos a los nodos
+  V(g)$name <- comorbidity_data$feature_names
+  
+  V(g)$type <- case_when(
+    grepl("^CIE10_", V(g)$name) ~ "CIE-10",
+    grepl("^SUST_", V(g)$name) ~ "Sustancia",
+    TRUE ~ "Otro"
+  )
+  
+  prevalence <- colSums(comorbidity_data$feature_matrix) / comorbidity_data$n_subjects
+  V(g)$prevalence <- as.numeric(prevalence)
+  
+  # Eliminar nodos aislados solo si son muchos
+  isolated <- which(degree(g) == 0)
+  if(length(isolated) > 0) {
+    cat("Nodos aislados encontrados:", length(isolated), "\n")
+    
+    if(length(isolated) > vcount(g) * 0.3) {
+      cat("Eliminando nodos aislados (>30% del total)\n")
+      g <- delete.vertices(g, isolated)
+      weights_matrix <- weights_matrix[-isolated, -isolated]
+    } else {
+      cat("Manteniendo nodos aislados\n")
+    }
+  }
+  
+  # Información sobre la red
+  cat("\nCaracterísticas de la red:\n")
+  cat("- Nodos:", vcount(g), "\n")
+  cat("- Aristas:", ecount(g), "\n")
+  cat("- Densidad:", round(edge_density(g), 4), "\n")
+  cat("- Componentes conectados:", components(g)$no, "\n")
+  
+  return(list(
+    graph = g,
+    weights = weights_matrix,
+    glasso_results = network
+  ))
+}
+
+# Agregar aquí las demás funciones auxiliares del código original:
+# - calculate_centrality_metrics
+# - detect_communities  
+# - visualize_comorbidity_network
+
+# ================================================================================
+# EJECUTAR ANÁLISIS
+# ================================================================================
+
+# Ejecutar análisis con configuración específica para CIE-10 longitudinal
+results_cie10 <- run_cie10_comorbidity_analysis(
+  data_input = data,
+  output_dir = "cie10_longitudinal_comorbidity",
+  include_substances = TRUE,  # Cambiar a FALSE si solo quieres CIE-10
+  gamma = 0.25,
+  analyze_temporal = TRUE
+)
+```
+```{r}
+# ================================================================================
+# ANÁLISIS DE REDES DE COMORBILIDAD - SOLO CIE-10 (DATOS LONGITUDINALES)
+# Dataset: Pacientes en rehabilitación de drogas en Chile
+# Unidad de análisis: Sujeto (HASH_KEY) - puede tener múltiples registros
+# ================================================================================
+
+# ================================================================================
+# FUNCIONES AUXILIARES
+# ================================================================================
+
+# Función para convertir listas a strings de manera segura
+list_to_string <- function(x, separator = "; ") {
+  if(is.list(x)) {
+    sapply(x, function(item) {
+      if(length(item) > 0 && !all(is.na(item))) {
+        paste(item[!is.na(item)], collapse = separator)
+      } else {
+        ""
+      }
+    })
+  } else {
+    as.character(x)
+  }
+}
+
+# ================================================================================
+# 1. PREPARACIÓN DE DATOS LONGITUDINALES
+# ================================================================================
+
+prepare_longitudinal_comorbidity_data <- function(data_input) {
+  
+  cat("Preparando datos longitudinales para análisis de comorbilidad CIE-10...\n")
+  cat("Dimensiones del dataset original:", nrow(data_input), "x", ncol(data_input), "\n")
+  
+  # Variables relevantes - SOLO CIE-10 y identificador
+  required_vars <- c(
+    "HASH_KEY",  # Identificador único del sujeto
+    "diagnostico_trs_psiquiatrico_cie_10",
+    # Variables demográficas (tomaremos la más reciente)
+    "sexo", "edad", "tipo_centro",
+    "fecha_ingresoa_tratamiento"
+  )
+  
+  # Verificar qué variables están disponibles
+  available_vars <- required_vars[required_vars %in% names(data_input)]
+  missing_vars <- required_vars[!required_vars %in% names(data_input)]
+  
+  if(!"HASH_KEY" %in% available_vars) {
+    stop("HASH_KEY no encontrado en el dataset. Esta variable es esencial para el análisis longitudinal.")
+  }
+  
+  if(!"diagnostico_trs_psiquiatrico_cie_10" %in% available_vars) {
+    stop("diagnostico_trs_psiquiatrico_cie_10 no encontrado en el dataset.")
+  }
+  
+  if(length(missing_vars) > 0) {
+    cat("\nVariables no encontradas (se omitirán):\n")
+    print(missing_vars[!missing_vars %in% c("HASH_KEY", "diagnostico_trs_psiquiatrico_cie_10")])
+  }
+  
+  # Seleccionar solo las variables disponibles
+  df <- data_input %>% 
+    select(all_of(available_vars))
+  
+  # Convertir factores a character
+  df <- df %>%
+    mutate(across(where(is.factor), as.character))
+  
+  # Estadísticas de datos longitudinales
+  n_total_registros <- nrow(df)
+  n_sujetos_unicos <- n_distinct(df$HASH_KEY)
+  
+  cat("\n=== Estadísticas de datos longitudinales ===\n")
+  cat("Total de registros:", n_total_registros, "\n")
+  cat("Sujetos únicos:", n_sujetos_unicos, "\n")
+  cat("Promedio de registros por sujeto:", round(n_total_registros/n_sujetos_unicos, 2), "\n")
+  
+  # Distribución de registros por sujeto
+  registros_por_sujeto <- df %>%
+    count(HASH_KEY) %>%
+    count(n, name = "frecuencia")
+  
+  cat("\nDistribución de registros por sujeto:\n")
+  print(head(registros_por_sujeto, 10))
+  
+  return(df)
+}
+
+# ================================================================================
+# 2. AGREGACIÓN DE DATOS POR SUJETO
+# ================================================================================
+
+aggregate_by_subject <- function(df) {
+  
+  cat("\n=== Agregando datos por sujeto (HASH_KEY) ===\n")
+  
+  # Para cada sujeto, recopilar TODOS los diagnósticos CIE-10 únicos
+  # que ha tenido a lo largo del tiempo
+  subject_diagnoses <- df %>%
+    group_by(HASH_KEY) %>%
+    summarise(
+      # Recopilar todos los diagnósticos únicos
+      all_cie10_diagnoses = list(unique(diagnostico_trs_psiquiatrico_cie_10[
+        !is.na(diagnostico_trs_psiquiatrico_cie_10) & 
+        !diagnostico_trs_psiquiatrico_cie_10 %in% c("En estudio", "Sin trastorno", "(NA)")
+      ])),
+      # Tomar información demográfica del registro más reciente
+      sexo = last(sexo, na_rm = TRUE),
+      edad_ultima = last(edad, na_rm = TRUE),
+      edad_primera = first(edad, na_rm = TRUE),
+      tipo_centro = last(tipo_centro, na_rm = TRUE),
+      n_registros = n(),
+      fecha_primer_ingreso = min(fecha_ingresoa_tratamiento, na.rm = TRUE),
+      fecha_ultimo_ingreso = max(fecha_ingresoa_tratamiento, na.rm = TRUE)
+    ) %>%
+    ungroup()
+  
+  # Calcular duración del seguimiento
+  subject_diagnoses <- subject_diagnoses %>%
+    mutate(
+      duracion_seguimiento_dias = as.numeric(
+        difftime(fecha_ultimo_ingreso, fecha_primer_ingreso, units = "days")
+      )
+    )
+  
+  # Verificar y convertir fechas a character si existen
+  if("fecha_primer_ingreso" %in% names(subject_diagnoses)) {
+    subject_diagnoses$fecha_primer_ingreso <- as.character(subject_diagnoses$fecha_primer_ingreso)
+  }
+  if("fecha_ultimo_ingreso" %in% names(subject_diagnoses)) {
+    subject_diagnoses$fecha_ultimo_ingreso <- as.character(subject_diagnoses$fecha_ultimo_ingreso)
+  }
+  
+  cat("Sujetos únicos procesados:", nrow(subject_diagnoses), "\n")
+  
+  # Estadísticas de diagnósticos por sujeto
+  n_diagnoses_per_subject <- sapply(subject_diagnoses$all_cie10_diagnoses, length)
+  
+  cat("\nEstadísticas de diagnósticos CIE-10 por sujeto:\n")
+  cat("- Media:", round(mean(n_diagnoses_per_subject), 2), "\n")
+  cat("- Mediana:", median(n_diagnoses_per_subject), "\n")
+  cat("- Máximo:", max(n_diagnoses_per_subject), "\n")
+  cat("- Sujetos sin diagnóstico:", sum(n_diagnoses_per_subject == 0), "\n")
+  cat("- Sujetos con 1 diagnóstico:", sum(n_diagnoses_per_subject == 1), "\n")
+  cat("- Sujetos con 2+ diagnósticos:", sum(n_diagnoses_per_subject >= 2), "\n")
+  
+  return(subject_diagnoses)
+}
+
+# ================================================================================
+# 3. CONSTRUCCIÓN DE MATRIZ DE COMORBILIDAD PARA CIE-10
+# ================================================================================
+
+create_cie10_comorbidity_matrix <- function(subject_data) {
+  
+  cat("\n=== Construyendo matriz de comorbilidad CIE-10 ===\n")
+  
+  # Obtener todos los diagnósticos CIE-10 únicos
+  all_diagnoses <- unique(unlist(subject_data$all_cie10_diagnoses))
+  all_diagnoses <- all_diagnoses[!is.na(all_diagnoses) & all_diagnoses != ""]
+  
+  cat("Diagnósticos CIE-10 únicos encontrados:", length(all_diagnoses), "\n")
+  
+  # Si hay demasiados, limitar a los más frecuentes
+  if(length(all_diagnoses) > 100) {
+    cat("Limitando a los 100 diagnósticos más frecuentes\n")
+    
+    # Calcular frecuencias
+    diagnosis_freq <- table(unlist(subject_data$all_cie10_diagnoses))
+    all_diagnoses <- names(sort(diagnosis_freq, decreasing = TRUE))[1:100]
+  }
+  
+  # Crear matriz binaria: filas = sujetos, columnas = diagnósticos
+  n_subjects <- nrow(subject_data)
+  n_diagnoses <- length(all_diagnoses)
+  
+  cat("\nCreando matriz de", n_subjects, "sujetos x", n_diagnoses, "diagnósticos\n")
+  
+  feature_matrix <- matrix(0, nrow = n_subjects, ncol = n_diagnoses)
+  colnames(feature_matrix) <- paste0("CIE10_", all_diagnoses)
+  rownames(feature_matrix) <- subject_data$HASH_KEY
+  
+  # Llenar la matriz
+  cat("Codificando diagnósticos en matriz binaria...\n")
+  
+  pb <- txtProgressBar(min = 0, max = n_subjects, style = 3)
+  
+  for(i in 1:n_subjects) {
+    subject_diags <- subject_data$all_cie10_diagnoses[[i]]
+    if(length(subject_diags) > 0) {
+      diag_indices <- which(all_diagnoses %in% subject_diags)
+      if(length(diag_indices) > 0) {
+        feature_matrix[i, diag_indices] <- 1
+      }
+    }
+    setTxtProgressBar(pb, i)
+  }
+  close(pb)
+  
+  # Filtrar diagnósticos con muy pocas observaciones
+  col_sums <- colSums(feature_matrix)
+  min_obs <- max(30, n_subjects * 0.005)  # Mínimo 30 casos o 0.5% de la muestra
+  keep_cols <- col_sums >= min_obs
+  
+  cat("\nEliminando", sum(!keep_cols), "diagnósticos con menos de", min_obs, "casos\n")
+  
+  feature_matrix <- feature_matrix[, keep_cols, drop = FALSE]
+  
+  # Filtrar sujetos sin ningún diagnóstico
+  row_sums <- rowSums(feature_matrix)
+  subjects_with_diagnosis <- row_sums > 0
+  
+  cat("Eliminando", sum(!subjects_with_diagnosis), "sujetos sin diagnósticos\n")
+  
+  feature_matrix <- feature_matrix[subjects_with_diagnosis, , drop = FALSE]
+  subject_data_filtered <- subject_data[subjects_with_diagnosis, ]
+  
+  # Estadísticas de la matriz
+  cat("\nEstadísticas de la matriz final:\n")
+  cat("- Dimensiones:", nrow(feature_matrix), "x", ncol(feature_matrix), "\n")
+  cat("- Densidad:", round(mean(feature_matrix), 4), "\n")
+  cat("- Diagnósticos por sujeto (media):", round(mean(rowSums(feature_matrix)), 2), "\n")
+  cat("- Prevalencia por diagnóstico (media):", round(mean(colSums(feature_matrix)/nrow(feature_matrix)), 4), "\n")
+  
+  # Convertir a sparse matrix para eficiencia
+  feature_matrix_sparse <- Matrix(feature_matrix, sparse = TRUE)
+  
+  # Calcular matriz de correlación tetracórica (más apropiada para datos binarios)
+  cat("\nCalculando correlaciones tetracóricas...\n")
+  
+  # Para datos binarios, usar correlación de Pearson como aproximación
+  # o calcular correlación tetracórica si el paquete está disponible
+  correlation_matrix <- cor(as.matrix(feature_matrix), use = "pairwise.complete.obs")
+  
+  # Manejar NAs y valores infinitos
+  correlation_matrix[is.na(correlation_matrix)] <- 0
+  correlation_matrix[is.infinite(correlation_matrix)] <- 0
+  diag(correlation_matrix) <- 1
+  
+  return(list(
+    feature_matrix = feature_matrix_sparse,
+    correlation = correlation_matrix,
+    feature_names = colnames(feature_matrix),
+    n_subjects = nrow(feature_matrix),
+    subject_data = subject_data_filtered
+  ))
+}
+
+# ================================================================================
+# 4. ANÁLISIS DE PATRONES DE COMORBILIDAD
+# ================================================================================
+
+analyze_comorbidity_patterns <- function(comorbidity_data) {
+  
+  cat("\n=== Analizando patrones de comorbilidad ===\n")
+  
+  feature_matrix <- as.matrix(comorbidity_data$feature_matrix)
+  
+  # 1. Pares de diagnósticos más frecuentes
+  cat("\nCalculando pares de diagnósticos más frecuentes...\n")
+  
+  n_diagnoses <- ncol(feature_matrix)
+  pairs_count <- list()
+  
+  for(i in 1:(n_diagnoses-1)) {
+    for(j in (i+1):n_diagnoses) {
+      # Contar co-ocurrencias
+      co_occur <- sum(feature_matrix[,i] == 1 & feature_matrix[,j] == 1)
+      if(co_occur > 0) {
+        pair_name <- paste(colnames(feature_matrix)[i], 
+                          colnames(feature_matrix)[j], sep = " <-> ")
+        pairs_count[[pair_name]] <- co_occur
+      }
+    }
+  }
+  
+  # Ordenar pares por frecuencia
+  pairs_df <- data.frame(
+    pair = names(pairs_count),
+    count = unlist(pairs_count),
+    stringsAsFactors = FALSE
+  ) %>%
+    arrange(desc(count)) %>%
+    mutate(
+      percentage = round(count / comorbidity_data$n_subjects * 100, 2)
+    )
+  
+  # Verificar que el dataframe no esté vacío
+  if(nrow(pairs_df) == 0) {
+    cat("No se encontraron pares de comorbilidad\n")
+    pairs_df <- data.frame(
+      pair = character(),
+      count = numeric(),
+      percentage = numeric(),
+      stringsAsFactors = FALSE
+    )
+  } else {
+    cat("\nTop 20 pares de comorbilidad:\n")
+    print(head(pairs_df, 20))
+  }
+  
+  # 2. Diagnósticos con mayor número de comorbilidades
+  cat("\n\nDiagnósticos con mayor número de comorbilidades promedio:\n")
+  
+  avg_comorbidities <- numeric(n_diagnoses)
+  names(avg_comorbidities) <- colnames(feature_matrix)
+  
+  for(i in 1:n_diagnoses) {
+    # Para cada diagnóstico, calcular el promedio de otros diagnósticos
+    # en sujetos que tienen este diagnóstico
+    subjects_with_diag <- which(feature_matrix[,i] == 1)
+    if(length(subjects_with_diag) > 0) {
+      other_diags <- rowSums(feature_matrix[subjects_with_diag, -i, drop = FALSE])
+      avg_comorbidities[i] <- mean(other_diags)
+    }
+  }
+  
+  comorbidity_summary <- data.frame(
+    diagnosis = names(avg_comorbidities),
+    prevalence = colSums(feature_matrix),
+    prevalence_pct = round(colSums(feature_matrix) / nrow(feature_matrix) * 100, 2),
+    avg_comorbidities = round(avg_comorbidities, 2)
+  ) %>%
+    arrange(desc(avg_comorbidities))
+  
+  print(head(comorbidity_summary, 15))
+  
+  return(list(
+    pairs = pairs_df,
+    summary = comorbidity_summary
+  ))
+}
+
+# ================================================================================
+# 5. ESTIMACIÓN DE RED (IGUAL QUE ANTES PERO ADAPTADA)
+# ================================================================================
+
+estimate_cie10_network <- function(comorbidity_data, lambda = NULL, gamma = 0.1) {
+  
+  cat("\n=== Estimando red de comorbilidad CIE-10 con Graphical LASSO ===\n")
+  
+  correlation_matrix <- comorbidity_data$correlation
+  
+  # Verificar y limpiar matriz
+  if(any(is.na(correlation_matrix))) {
+    correlation_matrix[is.na(correlation_matrix)] <- 0
+  }
+  
+  # Asegurar simetría
+  correlation_matrix <- (correlation_matrix + t(correlation_matrix)) / 2
+  diag(correlation_matrix) <- 1
+  
+  if(is.null(lambda)) {
+    cat("Seleccionando lambda óptimo mediante EBIC...\n")
+    cat("Usando gamma =", gamma, "\n")
+    
+    tryCatch({
+      network <- qgraph::EBICglasso(
+        correlation_matrix,
+        n = comorbidity_data$n_subjects,
+        gamma = gamma,
+        threshold = TRUE,
+        returnAllResults = TRUE,
+        checkPD = TRUE
+      )
+      
+      cat("Lambda seleccionado:", network$lambda, "\n")
+      
+      # Verificar sparsidad
+      sparsity <- mean(network$optnet == 0)
+      cat("Sparsidad de la red:", round(sparsity * 100, 2), "%\n")
+      
+      # Si la red es demasiado sparse, ajustar
+      if(sparsity > 0.95) {
+        cat("Red demasiado sparse, reduciendo penalización...\n")
+        network <- qgraph::EBICglasso(
+          correlation_matrix,
+          n = comorbidity_data$n_subjects,
+          gamma = 0,
+          threshold = FALSE,
+          returnAllResults = TRUE,
+          checkPD = TRUE
+        )
+        sparsity <- mean(network$optnet == 0)
+        cat("Nueva sparsidad:", round(sparsity * 100, 2), "%\n")
+      }
+      
+    }, error = function(e) {
+      cat("Error en EBICglasso:", e$message, "\n")
+      cat("Usando threshold manual\n")
+      
+      threshold_val = 0.05
+      partial_cor <- correlation_matrix
+      partial_cor[abs(partial_cor) < threshold_val] <- 0
+      
+      network <- list(
+        optnet = partial_cor,
+        lambda = threshold_val
+      )
+    })
+  }
+  
+  # Extraer matriz de pesos
+  weights_matrix <- network$optnet
+  
+  # Crear objeto igraph
+  g <- graph_from_adjacency_matrix(
+    abs(weights_matrix),
+    mode = "undirected",
+    weighted = TRUE,
+    diag = FALSE
+  )
+  
+  # Agregar atributos a los nodos
+  V(g)$name <- comorbidity_data$feature_names
+  V(g)$label <- gsub("^CIE10_", "", V(g)$name)
+  
+  # Prevalencia
+  prevalence <- colSums(comorbidity_data$feature_matrix) / comorbidity_data$n_subjects
+  V(g)$prevalence <- as.numeric(prevalence)
+  
+  # Información sobre la red
+  cat("\nCaracterísticas de la red:\n")
+  cat("- Nodos:", vcount(g), "\n")
+  cat("- Aristas:", ecount(g), "\n")
+  cat("- Densidad:", round(edge_density(g), 4), "\n")
+  cat("- Componentes conectados:", components(g)$no, "\n")
+  cat("- Diámetro:", ifelse(is_connected(g), diameter(g), "Red no conectada"), "\n")
+  cat("- Transitividad:", round(transitivity(g), 4), "\n")
+  
+  return(list(
+    graph = g,
+    weights = weights_matrix,
+    glasso_results = network
+  ))
+}
+
+# ================================================================================
+# 6. MÉTRICAS DE CENTRALIDAD
+# ================================================================================
+
+calculate_centrality_metrics <- function(network) {
+  
+  cat("\n=== Calculando métricas de centralidad ===\n")
+  
+  g <- network$graph
+  
+  # Calcular diferentes métricas de centralidad
+  centrality_df <- data.frame(
+    node = V(g)$name,
+    label = V(g)$label,
+    prevalence = V(g)$prevalence,
+    degree = degree(g),
+    strength = strength(g),
+    betweenness = betweenness(g, normalized = TRUE),
+    closeness = closeness(g, normalized = TRUE),
+    eigenvector = eigen_centrality(g)$vector,
+    stringsAsFactors = FALSE
+  )
+  
+  # Agregar rankings
+  centrality_df <- centrality_df %>%
+    mutate(
+      degree_rank = rank(-degree),
+      strength_rank = rank(-strength),
+      betweenness_rank = rank(-betweenness),
+      eigenvector_rank = rank(-eigenvector)
+    ) %>%
+    arrange(desc(strength))
+  
+  cat("\nTop 10 diagnósticos por centralidad (strength):\n")
+  print(head(centrality_df[, c("label", "prevalence", "strength", "degree", "betweenness")], 10))
+  
+  return(centrality_df)
+}
+
+# ================================================================================
+# 7. DETECCIÓN DE COMUNIDADES
+# ================================================================================
+
+detect_communities <- function(network) {
+  
+  cat("\n=== Detectando comunidades ===\n")
+  
+  g <- network$graph
+  
+  # Solo detectar comunidades si hay suficientes aristas
+  if(ecount(g) < 5) {
+    cat("Insuficientes aristas para detección de comunidades\n")
+    V(g)$community <- 1
+    return(list(
+      communities = NULL,
+      modularity = 0,
+      summary = data.frame()
+    ))
+  }
+  
+  # Probar diferentes algoritmos
+  cat("Probando algoritmo Louvain...\n")
+  comm_louvain <- cluster_louvain(g, weights = E(g)$weight)
+  
+  cat("Probando algoritmo Fast Greedy...\n")
+  comm_fastgreedy <- cluster_fast_greedy(g, weights = E(g)$weight)
+  
+  # Seleccionar el mejor basado en modularidad
+  mod_louvain <- modularity(comm_louvain)
+  mod_fastgreedy <- modularity(comm_fastgreedy)
+  
+  cat("Modularidad Louvain:", round(mod_louvain, 3), "\n")
+  cat("Modularidad Fast Greedy:", round(mod_fastgreedy, 3), "\n")
+  
+  if(mod_louvain >= mod_fastgreedy) {
+    communities <- comm_louvain
+    cat("Seleccionado: Louvain\n")
+  } else {
+    communities <- comm_fastgreedy
+    cat("Seleccionado: Fast Greedy\n")
+  }
+  
+  # Asignar comunidades a los nodos
+  V(g)$community <- membership(communities)
+  
+  # Resumen de comunidades
+  community_summary <- data.frame(
+    node = V(g)$name,
+    label = V(g)$label,
+    community = V(g)$community,
+    prevalence = V(g)$prevalence,
+    stringsAsFactors = FALSE
+  ) %>%
+    group_by(community) %>%
+    summarise(
+      size = n(),
+      members = paste(label[order(-prevalence)][1:min(5, n())], collapse = ", "),
+      avg_prevalence = mean(prevalence),
+      .groups = 'drop'
+    ) %>%
+    arrange(desc(size))
+  
+  cat("\nComunidades detectadas:", length(unique(V(g)$community)), "\n")
+  print(community_summary)
+  
+  return(list(
+    communities = communities,
+    modularity = modularity(communities),
+    summary = community_summary,
+    graph = g
+  ))
+}
+
+# ================================================================================
+# 8. VISUALIZACIÓN INTERACTIVA HTML
+# ================================================================================
+
+create_interactive_network <- function(network, centrality, communities, 
+                                      filter_threshold = 0.05) {
+  
+  cat("\n=== Creando visualización interactiva HTML ===\n")
+  cat("Características de la red interactiva:\n")
+  cat("- Zoom con scroll del mouse\n")
+  cat("- Arrastrar nodos y vista completa\n")
+  cat("- Búsqueda de diagnósticos específicos\n")
+  cat("- Filtrado por comunidades\n")
+  cat("- Información detallada al pasar el mouse\n")
+  cat("- Botones de navegación\n")
+  
+  # Instalar visNetwork si no está disponible
+  if(!require(visNetwork, quietly = TRUE)) {
+    install.packages("visNetwork")
+    library(visNetwork)
+  }
+  
+  g <- communities$graph
+  
+  # Filtrar aristas débiles para mejor visualización
+  if(filter_threshold > 0) {
+    weights <- E(g)$weight
+    keep_edges <- which(abs(weights) >= filter_threshold)
+    g_filtered <- subgraph.edges(g, keep_edges)
+    cat("Aristas filtradas para red interactiva:", ecount(g_filtered), "de", ecount(g), "\n")
+  } else {
+    g_filtered <- g
+  }
+  
+  # Preparar datos de nodos
+  nodes_df <- data.frame(
+    id = V(g_filtered)$name,
+    label = V(g_filtered)$label,
+    group = V(g_filtered)$community,
+    title = paste0(
+      "<b>", V(g_filtered)$label, "</b><br>",
+      "Prevalencia: ", round(V(g_filtered)$prevalence * 100, 2), "%<br>",
+      "Comunidad: ", V(g_filtered)$community, "<br>",
+      "Grado: ", degree(g_filtered)
+    ),
+    value = V(g_filtered)$prevalence * 100,  # Tamaño basado en prevalencia
+    stringsAsFactors = FALSE
+  )
+  
+  # Agregar métricas de centralidad
+  nodes_df <- nodes_df %>%
+    left_join(
+      centrality %>% select(node, strength, betweenness, eigenvector),
+      by = c("id" = "node")
+    ) %>%
+    mutate(
+      title = paste0(
+        title, "<br>",
+        "Strength: ", round(strength, 3), "<br>",
+        "Betweenness: ", round(betweenness, 3), "<br>",
+        "Eigenvector: ", round(eigenvector, 3)
+      )
+    )
+  
+  # Preparar datos de aristas
+  edges_matrix <- as_edgelist(g_filtered)
+  edges_df <- data.frame(
+    from = edges_matrix[,1],
+    to = edges_matrix[,2],
+    value = abs(E(g_filtered)$weight),
+    title = paste0("Peso: ", round(E(g_filtered)$weight, 3)),
+    stringsAsFactors = FALSE
+  )
+  
+  # Colores por comunidad
+  n_communities <- length(unique(nodes_df$group))
+  if(n_communities <= 12) {
+    community_colors <- RColorBrewer::brewer.pal(max(3, n_communities), "Set3")
+  } else {
+    community_colors <- rainbow(n_communities)
+  }
+  
+  # Crear paleta de colores para grupos
+  color_mapping <- data.frame(
+    group = 1:n_communities,
+    color = community_colors[1:n_communities]
+  )
+  
+  nodes_df <- nodes_df %>%
+    left_join(color_mapping, by = "group") %>%
+    mutate(
+      color.background = color,
+      color.border = darken_color(color, 0.2),
+      color.highlight.background = lighten_color(color, 0.2),
+      color.highlight.border = color
+    )
+  
+  # Crear visualización interactiva
+  vis_network <- visNetwork(nodes_df, edges_df, 
+                           main = "Red Interactiva de Comorbilidad CIE-10",
+                           submain = paste("Nodos:", vcount(g_filtered), 
+                                         "| Aristas:", ecount(g_filtered)),
+                           footer = "Usa el scroll para zoom, arrastra para mover") %>%
+    visOptions(
+      highlightNearest = list(enabled = TRUE, degree = 1, hover = TRUE),
+      selectedBy = list(variable = "group", main = "Seleccionar Comunidad"),
+      nodesIdSelection = list(enabled = TRUE, main = "Buscar Diagnóstico")
+    ) %>%
+    visInteraction(
+      navigationButtons = TRUE,
+      dragNodes = TRUE,
+      dragView = TRUE,
+      zoomView = TRUE,
+      hover = TRUE,
+      tooltipDelay = 100,
+      tooltipStyle = 'position: fixed; visibility: hidden; padding: 10px; 
+                     background-color: rgba(255,255,255,0.95); 
+                     border: 1px solid #ccc; border-radius: 5px;
+                     font-size: 12px; font-family: Arial;'
+    ) %>%
+    visPhysics(
+      enabled = TRUE,
+      solver = "forceAtlas2Based",
+      forceAtlas2Based = list(
+        gravitationalConstant = -50,
+        centralGravity = 0.01,
+        springLength = 100,
+        springConstant = 0.08,
+        damping = 0.4
+      ),
+      stabilization = list(
+        enabled = TRUE,
+        iterations = 1000,
+        updateInterval = 25
+      )
+    ) %>%
+    visLayout(
+      randomSeed = 123,
+      improvedLayout = TRUE
+    ) %>%
+    visEdges(
+      smooth = list(enabled = TRUE, type = "continuous"),
+      color = list(
+        color = "rgba(150,150,150,0.3)",
+        highlight = "rgba(100,100,100,0.8)"
+      ),
+      scaling = list(min = 0.5, max = 5)
+    ) %>%
+    visNodes(
+      shape = "dot",
+      scaling = list(
+        min = 10,
+        max = 50,
+        label = list(enabled = TRUE, min = 14, max = 20)
+      ),
+      font = list(size = 14, strokeWidth = 2, strokeColor = "white")
+    ) %>%
+    visLegend(
+      enabled = TRUE,
+      useGroups = FALSE,
+      addNodes = data.frame(
+        label = paste("Comunidad", 1:min(10, n_communities)),
+        color = community_colors[1:min(10, n_communities)],
+        shape = "dot"
+      ),
+      position = "left",
+      width = 0.15
+    )
+  
+  # Guardar como HTML
+  visSave(vis_network, file = "network_interactive_cie10.html", 
+          selfcontained = TRUE)
+  
+  cat("Red interactiva guardada como: network_interactive_cie10.html\n")
+  
+  return(vis_network)
+}
+
+# Funciones auxiliares para colores
+darken_color <- function(color, factor = 0.2) {
+  col_rgb <- col2rgb(color)
+  darker <- col_rgb * (1 - factor)
+  rgb(darker[1], darker[2], darker[3], maxColorValue = 255)
+}
+
+lighten_color <- function(color, factor = 0.2) {
+  col_rgb <- col2rgb(color)
+  lighter <- col_rgb + (255 - col_rgb) * factor
+  rgb(lighter[1], lighter[2], lighter[3], maxColorValue = 255)
+}
+
+# ================================================================================
+# 9. VISUALIZACIÓN ESTÁTICA (FUNCIÓN ORIGINAL RENOMBRADA)
+# ================================================================================
+
+visualize_cie10_network <- function(network, centrality, communities, 
+                                   filter_threshold = 0.1, 
+                                   layout_algorithm = "fr") {
+  
+  cat("\n=== Creando visualizaciones estáticas ===\n")
+  
+  g <- communities$graph
+  
+  # Filtrar aristas débiles para visualización
+  if(filter_threshold > 0) {
+    weights <- E(g)$weight
+    keep_edges <- which(abs(weights) >= filter_threshold)
+    g_filtered <- subgraph.edges(g, keep_edges)
+    cat("Aristas filtradas para visualización:", ecount(g_filtered), "de", ecount(g), "\n")
+  } else {
+    g_filtered <- g
+  }
+  
+  # Layout
+  set.seed(123)
+  if(layout_algorithm == "fr") {
+    layout <- layout_with_fr(g_filtered)
+  } else if(layout_algorithm == "kk") {
+    layout <- layout_with_kk(g_filtered)
+  } else {
+    layout <- layout_nicely(g_filtered)
+  }
+  
+  # Colores por comunidad
+  n_communities <- length(unique(V(g_filtered)$community))
+  if(n_communities <= 12) {
+    community_colors <- RColorBrewer::brewer.pal(max(3, n_communities), "Set3")
+  } else {
+    community_colors <- rainbow(n_communities)
+  }
+  
+  # Tamaño de nodos por prevalencia
+  node_sizes <- 5 + 20 * (V(g_filtered)$prevalence / max(V(g_filtered)$prevalence))
+  
+  # Plot 1: Red completa con comunidades
+  png("network_communities_cie10.png", width = 1200, height = 1000)
+  par(mar = c(1,1,3,1))
+  
+  plot(g_filtered,
+       layout = layout,
+       vertex.color = community_colors[V(g_filtered)$community],
+       vertex.size = node_sizes,
+       vertex.label = V(g_filtered)$label,
+       vertex.label.cex = 0.7,
+       vertex.label.color = "black",
+       edge.width = abs(E(g_filtered)$weight) * 3,
+       edge.color = adjustcolor("gray60", alpha.f = 0.5),
+       main = "Red de Comorbilidad CIE-10 - Comunidades",
+       sub = paste("Nodos:", vcount(g_filtered), "| Aristas:", ecount(g_filtered)))
+  
+  legend("topright", 
+         legend = paste("Comunidad", 1:n_communities),
+         fill = community_colors,
+         title = "Comunidades",
+         cex = 0.8)
+  
+  dev.off()
+  
+  # Plot 2: Heatmap de correlaciones
+  png("heatmap_correlations_cie10.png", width = 1000, height = 1000)
+  
+  cor_matrix <- network$weights
+  
+  # Ordenar por comunidad
+  comm_order <- order(V(g)$community)
+  cor_matrix_ordered <- cor_matrix[comm_order, comm_order]
+  
+  # Crear heatmap
+  heatmap(cor_matrix_ordered,
+          Rowv = NA, Colv = NA,
+          col = colorRampPalette(c("blue", "white", "red"))(100),
+          scale = "none",
+          margins = c(10, 10),
+          labRow = V(g)$label[comm_order],
+          labCol = V(g)$label[comm_order],
+          cexRow = 0.6,
+          cexCol = 0.6,
+          main = "Matriz de Correlación - Diagnósticos CIE-10")
+  
+  dev.off()
+  
+  # Plot 3: Gráfico de centralidad
+  png("centrality_plot_cie10.png", width = 1200, height = 800)
+  par(mfrow = c(2,2), mar = c(8,4,3,2))
+  
+  # Top 15 por diferentes métricas
+  top_n <- 15
+  
+  # Degree
+  top_degree <- head(centrality[order(-centrality$degree), ], top_n)
+  barplot(top_degree$degree,
+          names.arg = top_degree$label,
+          las = 2,
+          main = "Top 15 - Degree Centrality",
+          col = "lightblue",
+          cex.names = 0.7)
+  
+  # Strength
+  top_strength <- head(centrality[order(-centrality$strength), ], top_n)
+  barplot(top_strength$strength,
+          names.arg = top_strength$label,
+          las = 2,
+          main = "Top 15 - Strength Centrality",
+          col = "lightgreen",
+          cex.names = 0.7)
+  
+  # Betweenness
+  top_between <- head(centrality[order(-centrality$betweenness), ], top_n)
+  barplot(top_between$betweenness,
+          names.arg = top_between$label,
+          las = 2,
+          main = "Top 15 - Betweenness Centrality",
+          col = "lightyellow",
+          cex.names = 0.7)
+  
+  # Eigenvector
+  top_eigen <- head(centrality[order(-centrality$eigenvector), ], top_n)
+  barplot(top_eigen$eigenvector,
+          names.arg = top_eigen$label,
+          las = 2,
+          main = "Top 15 - Eigenvector Centrality",
+          col = "lightcoral",
+          cex.names = 0.7)
+  
+  dev.off()
+  
+  cat("Visualizaciones guardadas:\n")
+  cat("- network_communities_cie10.png\n")
+  cat("- heatmap_correlations_cie10.png\n")
+  cat("- centrality_plot_cie10.png\n")
+  
+  return(g_filtered)
+}
+
+# ================================================================================
+# FUNCIÓN PRINCIPAL
+# ================================================================================
+
+run_cie10_longitudinal_analysis <- function(data_input, 
+                                           output_dir = "cie10_comorbidity_results",
+                                           use_gamma = 0.1) {
+  
+  # Crear directorio de salida
+  if(!dir.exists(output_dir)) {
+    dir.create(output_dir, recursive = TRUE)
+  }
+  
+  # Guardar directorio actual
+  original_dir <- getwd()
+  setwd(output_dir)
+  
+  cat("\n")
+  cat("================================================================\n")
+  cat("   ANÁLISIS DE REDES DE COMORBILIDAD CIE-10\n")
+  cat("   DATOS LONGITUDINALES\n")
+  cat("================================================================\n")
+  cat("Configuración:\n")
+  cat("- Unidad de análisis: Sujeto (HASH_KEY)\n")
+  cat("- Diagnósticos: Solo CIE-10\n")
+  cat("- Tipo de datos: Longitudinales (múltiples registros por sujeto)\n")
+  cat("- Gamma para EBIC:", use_gamma, "\n")
+  cat("================================================================\n")
+  
+  start_time <- Sys.time()
+  
+  tryCatch({
+    # 1. Preparar datos
+    df <- prepare_longitudinal_comorbidity_data(data_input)
+    
+    # 2. Agregar por sujeto
+    subject_data <- aggregate_by_subject(df)
+    
+    # 3. Crear matriz de comorbilidad
+    comorbidity_data <- create_cie10_comorbidity_matrix(subject_data)
+    
+    if(ncol(comorbidity_data$correlation) < 2) {
+      stop("Insuficientes diagnósticos para construir una red")
+    }
+    
+    # 4. Analizar patrones
+    patterns <- analyze_comorbidity_patterns(comorbidity_data)
+    
+    # 5. Estimar red
+    network <- estimate_cie10_network(comorbidity_data, gamma = use_gamma)
+    
+    # 6. Calcular centralidad
+    centrality <- calculate_centrality_metrics(network)
+    
+    # 7. Detectar comunidades
+    communities <- detect_communities(network)
+    
+    # 8. Visualizaciones estáticas
+    vis_network <- visualize_cie10_network(network, centrality, communities,
+                                          filter_threshold = 0.05)
+    
+    # 9. Visualización interactiva HTML
+    interactive_net <- create_interactive_network(network, centrality, communities,
+                                                 filter_threshold = 0.05)
+    
+    # Guardar resultados
+    cat("\n=== Guardando resultados ===\n")
+    
+    write.csv(centrality, "centrality_metrics_cie10.csv", row.names = FALSE)
+    write.csv(communities$summary, "community_summary_cie10.csv", row.names = FALSE)
+    write.csv(patterns$pairs, "comorbidity_pairs_cie10.csv", row.names = FALSE)
+    write.csv(patterns$summary, "diagnosis_summary_cie10.csv", row.names = FALSE)
+    
+    # Guardar información de sujetos con múltiples registros
+    # Convertir lista de diagnósticos a string para poder guardar en CSV
+    multi_record_subjects <- subject_data %>%
+      filter(n_registros > 1) %>%
+      mutate(
+        # Convertir lista de diagnósticos a string separado por punto y coma
+        diagnoses_string = list_to_string(all_cie10_diagnoses),
+        # Contar número de diagnósticos únicos
+        n_unique_diagnoses = sapply(all_cie10_diagnoses, function(x) length(x[!is.na(x)]))
+      ) %>%
+      select(-all_cie10_diagnoses) %>%  # Remover la columna de lista
+      arrange(desc(n_registros))
+    
+    # Verificar antes de guardar
+    if(nrow(multi_record_subjects) > 0) {
+      write.csv(multi_record_subjects, "subjects_multiple_records.csv", row.names = FALSE)
+      cat("Guardado: subjects_multiple_records.csv\n")
+    } else {
+      cat("No hay sujetos con múltiples registros para guardar\n")
+    }
+    
+    # Resumen detallado
+    summary_report <- list(
+      n_total_records = nrow(df),
+      n_unique_subjects = nrow(subject_data),
+      n_subjects_analyzed = comorbidity_data$n_subjects,
+      avg_records_per_subject = mean(subject_data$n_registros),
+      n_diagnoses = ncol(comorbidity_data$feature_matrix),
+      n_nodes = vcount(network$graph),
+      n_edges = ecount(network$graph),
+      density = edge_density(network$graph),
+      transitivity = transitivity(network$graph),
+      modularity = communities$modularity,
+      n_communities = length(unique(V(network$graph)$community)),
+      top_central_nodes = head(centrality, 15),
+      top_comorbidity_pairs = head(patterns$pairs, 20),
+      execution_time = Sys.time() - start_time,
+      configuration = list(
+        gamma = use_gamma,
+        diagnostic_system = "CIE-10",
+        data_type = "longitudinal",
+        unit_of_analysis = "subject (HASH_KEY)"
+      )
+    )
+    
+    # Guardar objetos RDS con manejo de errores
+    tryCatch({
+      saveRDS(summary_report, "analysis_summary_cie10.rds")
+      cat("Guardado: analysis_summary_cie10.rds\n")
+    }, error = function(e) {
+      cat("Advertencia: No se pudo guardar analysis_summary_cie10.rds\n")
+    })
+    
+    tryCatch({
+      saveRDS(network, "network_object.rds")
+      cat("Guardado: network_object.rds\n")
+    }, error = function(e) {
+      cat("Advertencia: No se pudo guardar network_object.rds\n")
+    })
+    
+    tryCatch({
+      # Guardar solo los elementos esenciales de comorbidity_data
+      comorbidity_data_simple <- list(
+        n_subjects = comorbidity_data$n_subjects,
+        feature_names = comorbidity_data$feature_names,
+        correlation = comorbidity_data$correlation
+      )
+      saveRDS(comorbidity_data_simple, "comorbidity_data.rds")
+      cat("Guardado: comorbidity_data.rds\n")
+    }, error = function(e) {
+      cat("Advertencia: No se pudo guardar comorbidity_data.rds\n")
+    })
+    
+    # Imprimir resumen final
+    cat("\n================================================================\n")
+    cat("  RESUMEN DEL ANÁLISIS\n")
+    cat("================================================================\n")
+    cat("Registros totales procesados:", summary_report$n_total_records, "\n")
+    cat("Sujetos únicos:", summary_report$n_unique_subjects, "\n")
+    cat("Sujetos en análisis final:", summary_report$n_subjects_analyzed, "\n")
+    cat("Promedio registros/sujeto:", round(summary_report$avg_records_per_subject, 2), "\n")
+    cat("\n--- Red de Comorbilidad ---\n")
+    cat("Diagnósticos CIE-10:", summary_report$n_diagnoses, "\n")
+    cat("Nodos en la red:", summary_report$n_nodes, "\n")
+    cat("Aristas en la red:", summary_report$n_edges, "\n")
+    cat("Densidad de la red:", round(summary_report$density, 4), "\n")
+    cat("Modularidad:", round(summary_report$modularity, 3), "\n")
+    cat("Comunidades detectadas:", summary_report$n_communities, "\n")
+    cat("\n=== Top 5 diagnósticos más centrales ===\n")
+    print(head(centrality[, c("label", "prevalence", "strength", "degree")], 5))
+    cat("\n=== Top 5 pares de comorbilidad ===\n")
+    print(head(patterns$pairs[, c("pair", "count", "percentage")], 5))
+    
+    cat("\n================================================================\n")
+    cat("  ANÁLISIS COMPLETADO\n")
+    cat("================================================================\n")
+    cat("Tiempo de ejecución:", round(as.numeric(summary_report$execution_time, units = "mins"), 2), "minutos\n")
+    cat("Resultados guardados en:", output_dir, "\n")
+    cat("\nArchivos generados:\n")
+    cat("- network_interactive_cie10.html (Red interactiva - abrir en navegador)\n")
+    cat("- network_communities_cie10.png\n")
+    cat("- heatmap_correlations_cie10.png\n")
+    cat("- centrality_plot_cie10.png\n")
+    cat("- centrality_metrics_cie10.csv\n")
+    cat("- comorbidity_pairs_cie10.csv\n")
+    cat("- community_summary_cie10.csv\n")
+    cat("- diagnosis_summary_cie10.csv\n")
+    cat("- subjects_multiple_records.csv\n")
+    cat("- analysis_summary_cie10.rds\n")
+    cat("\n📌 NOTA: Abre 'network_interactive_cie10.html' en tu navegador para\n")
+    cat("   explorar la red de forma interactiva con zoom, búsqueda y filtros.\n")
+    
+    return(list(
+      network = network,
+      centrality = centrality,
+      communities = communities,
+      patterns = patterns,
+      summary = summary_report,
+      interactive_network = interactive_net
+    ))
+    
+  }, error = function(e) {
+    cat("\nError durante el análisis:", e$message, "\n")
+    setwd(original_dir)
+    stop(e)
+  }, finally = {
+    setwd(original_dir)
+  })
+}
+
+# ================================================================================
+# EJECUTAR ANÁLISIS
+# ================================================================================
+
+# Asegurarse de que las librerías necesarias estén cargadas
+required_packages <- c("tidyverse", "igraph", "qgraph", "Matrix", "RColorBrewer", "visNetwork")
+for(pkg in required_packages) {
+  if(!require(pkg, character.only = TRUE)) {
+    install.packages(pkg)
+    library(pkg, character.only = TRUE)
+  }
+}
+
+# Ejecutar análisis
+results_cie10 <- run_cie10_longitudinal_analysis(
+  data_input = data,  # Tu dataset
+  output_dir = "cie10_longitudinal_comorbidity",
+  use_gamma = 0.1  # Ajusta este valor: 0 = más conexiones, 0.5 = menos conexiones
+)
+```
+
