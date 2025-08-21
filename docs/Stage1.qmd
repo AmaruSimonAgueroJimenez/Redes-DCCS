@@ -30,9 +30,9 @@ execute:
 
 # Metodología del Análisis de Redes de Co-consumo de Sustancias
 
-## 1. Construcción de las Redes
+## Construcción de las Redes
 
-### 1.1 Red de Co-ocurrencia
+### Red de Co-ocurrencia
 
 La red de co-ocurrencia se construyó mediante una matriz de adyacencia simétrica $A_{co}$ donde cada elemento $a_{ij}$ representa el número de pacientes que consumieron tanto la sustancia $i$ como la sustancia $j$:
 
@@ -43,7 +43,7 @@ donde:
 - $S_p$ es el conjunto de sustancias consumidas por el paciente $p$
 - $\mathbb{1}$ es la función indicadora
 
-### 1.2 Red Bipartita
+### Red Bipartita
 
 La red bipartita $G_{bi} = (V_P \cup V_S, E)$ se definió con dos conjuntos disjuntos de nodos:
 - $V_P$: conjunto de pacientes
@@ -57,7 +57,7 @@ $$w_{ps} = \begin{cases}
 1 & \text{si } s \text{ es sustancia secundaria}
 \end{cases}$$
 
-### 1.3 Proyección de la Red Bipartita
+### Proyección de la Red Bipartita
 
 La proyección sobre el conjunto de sustancias generó una red unimodal donde el peso entre dos sustancias $i$ y $j$ representa el número de pacientes que las consumieron:
 
@@ -65,9 +65,9 @@ $$W_{proj}[i,j] = |P_i \cap P_j|$$
 
 donde $P_i$ es el conjunto de pacientes que consumieron la sustancia $i$.
 
-## 2. Métricas de Centralidad
+## Métricas de Centralidad
 
-### 2.1 Grado y Grado Ponderado (Fuerza)
+### Grado y Grado Ponderado (Fuerza)
 
 Para cada nodo $v$ en la red:
 
@@ -79,7 +79,7 @@ $$s_v = \sum_{u \in V} w_{vu}$$
 
 donde $w_{vu}$ es el peso del enlace entre $v$ y $u$.
 
-### 2.2 Centralidad de Intermediación
+### Centralidad de Intermediación
 
 La centralidad de intermediación mide la frecuencia con que un nodo aparece en los caminos más cortos entre otros pares de nodos:
 
@@ -92,7 +92,7 @@ donde:
 **Versión normalizada:**
 $$C_B^{norm}(v) = \frac{C_B(v)}{(n-1)(n-2)/2}$$
 
-### 2.3 Centralidad de Cercanía
+### Centralidad de Cercanía
 
 Mide la distancia promedio de un nodo a todos los demás:
 
@@ -100,7 +100,7 @@ $$C_C(v) = \frac{n-1}{\sum_{u \neq v} d(v,u)}$$
 
 donde $d(v,u)$ es la distancia geodésica entre $v$ y $u$.
 
-### 2.4 Centralidad de Eigenvector
+### Centralidad de Eigenvector
 
 La centralidad de eigenvector considera que la importancia de un nodo depende de la importancia de sus vecinos:
 
@@ -111,7 +111,7 @@ donde:
 - $N(v)$ es el conjunto de vecinos de $v$
 - $x_u$ es la centralidad de eigenvector del nodo $u$
 
-### 2.5 PageRank
+### PageRank
 
 El PageRank generaliza la centralidad de eigenvector con un factor de amortiguamiento $\alpha$:
 
@@ -122,7 +122,7 @@ donde:
 - $N^{in}(v)$ son los nodos que apuntan a $v$
 - $k_{out}(u)$ es el grado de salida de $u$
 
-### 2.6 Hub Score y Authority Score
+### Hub Score y Authority Score
 
 Basados en el algoritmo HITS:
 
@@ -134,9 +134,9 @@ $$a(v) = \sum_{u \in N^{in}(v)} h(u)$$
 
 Estos valores se calculan iterativamente hasta convergencia.
 
-## 3. Propiedades Estructurales
+## Propiedades Estructurales
 
-### 3.1 Densidad de la Red
+### Densidad de la Red
 
 La densidad mide la proporción de enlaces existentes respecto al máximo posible:
 
@@ -144,7 +144,7 @@ $$\rho = \frac{2m}{n(n-1)}$$
 
 donde $m$ es el número de enlaces y $n$ el número de nodos.
 
-### 3.2 Coeficiente de Clustering
+### Coeficiente de Clustering
 
 **Clustering Global:**
 $$C_{global} = \frac{3 \times \text{número de triángulos}}{\text{número de tripletes conectados}}$$
@@ -158,13 +158,13 @@ $$c_v = \frac{2e_v}{k_v(k_v-1)}$$
 
 siendo $e_v$ el número de enlaces entre los vecinos de $v$.
 
-### 3.3 Transitividad
+### Transitividad
 
 La transitividad es similar al clustering global:
 
 $$T = \frac{\text{número de triángulos cerrados}}{\text{número de triángulos posibles}}$$
 
-### 3.4 Asortatividad
+### Asortatividad
 
 La asortatividad por grado mide la tendencia de los nodos a conectarse con nodos de grado similar:
 
@@ -172,9 +172,9 @@ $$r = \frac{\sum_{e} j_e k_e - [\sum_{e} \frac{1}{2}(j_e + k_e)]^2}{\sum_{e} \fr
 
 donde $j_e$ y $k_e$ son los grados de los nodos en los extremos del enlace $e$.
 
-## 4. Detección de Comunidades
+## Detección de Comunidades
 
-### 4.1 Algoritmo de Louvain
+### Algoritmo de Louvain
 
 El algoritmo de Louvain maximiza la modularidad $Q$:
 
@@ -186,7 +186,7 @@ donde:
 - $c_i$ es la comunidad del nodo $i$
 - $\delta$ es la función delta de Kronecker
 
-### 4.2 Modularidad
+### Modularidad
 
 La modularidad mide la calidad de la partición en comunidades:
 
@@ -197,9 +197,9 @@ donde:
 - $L$ es el número total de enlaces
 - $d_c$ es la suma de grados de nodos en la comunidad $c$
 
-## 5. Medidas de Centralización
+## Medidas de Centralización
 
-### 5.1 Centralización de Freeman
+### Centralización de Freeman
 
 Para cualquier métrica de centralidad $C$:
 
@@ -207,9 +207,9 @@ $$C_{centralization} = \frac{\sum_{i=1}^{n} [C_{max} - C_i]}{max \sum_{i=1}^{n} 
 
 donde $C_{max}$ es el valor máximo de centralidad en la red.
 
-## 6. Análisis de Similitud
+## Análisis de Similitud
 
-### 6.1 Índice de Jaccard
+### Índice de Jaccard
 
 Para dos nodos $i$ y $j$, el coeficiente de Jaccard basado en vecindarios:
 
@@ -217,7 +217,7 @@ $$J(i,j) = \frac{|N_i \cap N_j|}{|N_i \cup N_j|}$$
 
 donde $N_i$ y $N_j$ son los conjuntos de vecinos de $i$ y $j$ respectivamente.
 
-### 6.2 Matriz de Correlación
+### Matriz de Correlación
 
 Para el dendrograma, se utilizó la distancia basada en correlación:
 
@@ -225,7 +225,7 @@ $$d_{ij} = 1 - \text{cor}(A_i, A_j)$$
 
 donde $A_i$ y $A_j$ son las filas $i$ y $j$ de la matriz de adyacencia.
 
-## 7. Análisis K-Core
+## Análisis K-Core
 
 El k-core de un grafo es el subgrafo maximal donde cada nodo tiene al menos grado $k$:
 
@@ -235,9 +235,9 @@ El valor de coreness de un nodo $v$ es:
 
 $$core(v) = max\{k : v \in H_k\}$$
 
-## 8. Métricas Específicas para Redes Bipartitas
+## Métricas Específicas para Redes Bipartitas
 
-### 8.1 Conectancia
+### Conectancia
 
 En redes bipartitas, la conectancia mide la proporción de enlaces respecto al máximo posible:
 
@@ -251,9 +251,9 @@ $$\langle k_P \rangle = \frac{1}{|V_P|} \sum_{p \in V_P} k_p$$
 
 $$\langle k_S \rangle = \frac{1}{|V_S|} \sum_{s \in V_S} k_s$$
 
-## 9. Distribución de Grado
+## Distribución de Grado
 
-### 9.1 Análisis de Ley de Potencias
+### Análisis de Ley de Potencias
 
 Se evaluó si la distribución de grado sigue una ley de potencias:
 
@@ -265,7 +265,7 @@ $$\log P(k) = -\gamma \log k + c$$
 
 donde $\gamma$ es el exponente de la ley de potencias.
 
-## 10. Identificación de Sustancias Gateway
+## Identificación de Sustancias Gateway
 
 Se calculó un score compuesto para identificar sustancias gateway:
 
@@ -277,17 +277,19 @@ Este score combina:
 - Influencia en la red (eigenvector)
 - Importancia global (PageRank normalizado)
 
-## 11. Categorización de Riesgo
+## Categorización de Riesgo
 
 Los pacientes se clasificaron según:
 
-$$Risk(p) = \begin{cases}
+$$
+Risk(p) = \begin{cases}
 \text{Muy Alto} & \text{si } |S_p| \geq 4 \land HR_p \\
 \text{Alto} & \text{si } |S_p| \geq 3 \land HR_p \\
 \text{Moderado-Alto} & \text{si } |S_p| \geq 3 \\
 \text{Moderado} & \text{si } HR_p \\
 \text{Bajo} & \text{en otro caso}
-\end{cases}$$
+\end{cases}
+$$
 
 donde:
 - $|S_p|$ es el número de sustancias consumidas por el paciente $p$
