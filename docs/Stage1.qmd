@@ -28,7 +28,7 @@ execute:
   fig-height: 6
 ---
 
-# Metodología del Análisis de Redes de Co-consumo de Sustancias
+# METODOLOGÍA
 
 ## Construcción de las Redes
 
