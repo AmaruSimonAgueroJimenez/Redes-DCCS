@@ -934,7 +934,7 @@ visNetwork(nodes_co, edges_co, height = "700px", width = "100%") %>%
 
 ## Construcción de la Red
 
-La red bipartita es  útil y que representa simultáneamente a los pacientes y a las sustancias, preservando la heterogeneidad individual y, a la vez, permitiendo ver la prevalencia relativa de cada sustancia a través del grado de sus nodos [@Wang2022JBI; @Borgatti1997]. Al mantener la estructura de dos modos, se evita la pérdida de información y las distorsiones que introducen las proyecciones unipartitas  y se pueden aplicar métricas específicas de bipartitos para capturar patrones de alto riesgo [@Yang2022PONE]. Además, medidas como la betweenness centrality identifican sustancias que actúan como "puentes" entre grupos de consumidores, clave para detectar rutas de transición en el policonsumo [@Pavlopoulos2018]. Para descubrir perfiles y comunidades de policonsumo se dispone de modularidad bipartita y variantes para redes ponderadas, validadas en la literatura metodológica [@Dormann2014; @Beckett2016]. La utilidad clínica de los bipartitos está documentada en contextos de salud: redes paciente‑prescriptor y paciente‑hospital han permitido detectar conductas de búsqueda de fármacos y diferenciar patrones según sustancia, evidenciando nodos (sustancias o instituciones) estratégicos para intervención [@Yang2022PONE; @Kim2024]. Finalmente, para equilibrar legibilidad y representatividad de la visualización, el muestreo aleatorio simple de 2.500 pacientes facilita la visulización sin introducir sesgos y, usado con fines gráficos, preserva propiedades globales (distribuciones y relaciones clave) de forma aceptable para el análisis exploratorio [@Wu2017TVCG; @Hu2013].
+La red bipartita es  útil y que representa simultáneamente a los pacientes y a las sustancias, preservando la heterogeneidad individual y, a la vez, permitiendo ver la prevalencia relativa de cada sustancia a través del grado de sus nodos [@Wang2022JBI; @Borgatti1997]. Al mantener la estructura de dos modos, se evita la pérdida de información y las distorsiones que introducen las proyecciones unipartitas  y se pueden aplicar métricas específicas de bipartitos para capturar patrones de alto riesgo [@Yang2022PONE]. Además, medidas como la betweenness centrality identifican sustancias que actúan como "puentes" entre grupos de consumidores, clave para detectar rutas de transición en el policonsumo [@Pavlopoulos2018]. Para descubrir perfiles y comunidades de policonsumo se dispone de modularidad bipartita y variantes para redes ponderadas, validadas en la literatura metodológica [@Dormann2014; @Beckett2016]. La utilidad clínica de los bipartitos está documentada en contextos de salud: redes paciente‑prescriptor y paciente‑hospital han permitido detectar conductas de búsqueda de fármacos y diferenciar patrones según sustancia, evidenciando nodos (sustancias o instituciones) estratégicos para intervención [@Yang2022PONE]. Finalmente, para equilibrar legibilidad y representatividad de la visualización, el muestreo aleatorio simple de 2.500 pacientes facilita la visulización sin introducir sesgos y, usado con fines gráficos, preserva propiedades globales (distribuciones y relaciones clave) de forma aceptable para el análisis exploratorio [@Wu2017TVCG; @Hu2013].
 
 ```{r bipartite-construction}
 # MUESTREO ALEATORIO SIMPLE DE 2,500 SUJETOS DEL TOTAL
@@ -1265,7 +1265,7 @@ print(p)
 ## Red Interactiva Bipartita
 
 ```{r bipartite-interactive}
-#| fig-cap: "Red bipartita interactiva (muestra aleatoria simple de 2,500 pacientes - zoom y arrastre habilitados)"
+#| fig-cap: "Red bipartita interactiva (muestra aleatoria simple de 10,000 pacientes - zoom y arrastre habilitados)"
 
 # Usar el grafo muestreado
 g_bi_interactive <- g_bipartite
@@ -1718,8 +1718,27 @@ visNetwork(nodes_proj, edges_proj, height = "700px", width = "100%") %>%
   ) %>%
   visConfigure(enabled = FALSE)
 ```
+## Comunidades en las redes
+
+Se identificaron comunidades utilizando optimización de modularidad con el algoritmo de Louvain en las tres representaciones (co‑ocurrencia, bipartita y proyección), pero los módulos detectados no son idénticos entre las redes. En la red de co‑ocurrencia se observan dos módulos con modularidad muy baja. Uno agrupa sustancias de alto peso en la red – alcohol, cocaína, crack y derivados de metanfetaminas– que suelen consumirse de manera conjunta y están asociadas a patrones de policonsumo de mayor intensidad. El otro incluye marihuana, pasta base, sedantes, opioides, inhalables, alucinógenos (LSD, hongos) y MDMA. Estas agrupaciones reflejan la severidad y las trayectorias de uso más que una afinidad farmacológica estricta: sustancias clasificadas como depresoras (p. ej. alcohol) aparecen en el mismo módulo que estimulantes (cocaína y crack), mientras que sedantes y opioides se agrupan con marihuana y alucinógenos.
+
+En la red bipartita paciente–sustancia el algoritmo Louvain arroja una modularidad más alta, lo que indica una estructura comunitaria más definida. Estos módulos corresponden a subpoblaciones de pacientes con combinaciones de sustancias similares y permiten distinguir perfiles clínicos y sociodemográficos específicos. La red bipartita mantiene la información individual y facilita la identificación de “nodos puente” a nivel de sustancias; medidas de intermediación elevadas señalan sustancias que conectan grupos de consumidores distintos (v.gr. alcohol, sedantes) y que podrían indicar rutas de transición o escalada. A diferencia de la co‑ocurrencia instantánea, la bipartita permite ver la prevalencia relativa de cada sustancia a través del grado de sus nodos, y aplicar métricas específicas para capturar patrones de alto riesgo [@Blondel2008JSM; @Yang2022PONE].
+
+La proyección de la red bipartita sobre el modo “sustancias” también produce dos módulos, pero con modularidad muy baja. Se forma un módulo centrado en los sedantes, hipnóticos y alcohol, y otro que agrupa cocaína, pasta base, marihuana, opioides, alucinógenos y estimulantes. La proyección integra la experiencia acumulada de los pacientes y revela asociaciones de consumo comunes aunque no coincidan temporalmente, en línea con el marco de redes multicapa/temporales para estudiar estructuras que persisten al cambiar el modo de representación [@Mucha2010Science; @Kivela2014JCN]. La comparación de representaciones muestra, por tanto, que la comunidad de sedantes y alcohol en la proyección se disocia del módulo de cocaína que en la co‑ocurrencia aparecía junto a alcohol.
+
+La identificación de nodos de alto grado e intermediación se mantiene transversalmente. El alcohol conserva el mayor grado en las redes de co‑ocurrencia y proyección y actúa como puente porque está presente en la mayoría de los perfiles de consumo. En la proyección, sustancias de baja prevalencia como fenilciclidina (PCP), heroína y hongos exhiben las mayores intermediaciones, lo que indica que conectan comunidades que, de otro modo, permanecerían separadas. Estos nodos puente son dianas estratégicas para intervenciones de reducción de daños y vigilancia clínica [@Jones2021MBR].
+
+Por último las comunidades detectadas en las tres redes no obedecen de manera estricta a categorías farmacológicas, sino que reflejan la intensidad y la evolución del policonsumo. La modularidad baja en la co‑ocurrencia y la proyección sugiere que el consumo está poco compartimentado en esas representaciones, mientras que la bipartita revela subpoblaciones más definidas. Conviene interpretar los resultados junto con métricas de estabilidad y comparaciones entre representaciones de la misma población debido al límite de resolución de la modularidad [@FortunatoBarthelemy2007PNAS; @Fortunato2010PhysRep]. Las intervenciones deberían adaptarse a los perfiles de cada comunidad (p. ej., diferenciar entre patrones dominados por alcohol/cocaína y perfiles con marihuana, sedantes y opioides) en lugar de asumir grupos fijos de “depresores” o “estimulantes”, y prestar especial atención a los nodos puente que facilitan las transiciones entre patrones de consumo. Además, las rutas de administración y la cinética de entrada al cerebro contribuyen al agrupamiento: vías que aceleran la llegada del fármaco (inyectar, fumar) incrementan la liabilidad adictiva y favorecen transiciones entre sustancias con prácticas similares, lo que se traduce en comunidades densas y puentes entre ellas [@Samaha2005Trends; @Allain2015NBR; @Roy2013DAD]. Las trayectorias de escalada/sustitución y los patrones de “sustancias de entrada” descritos en la literatura (p. ej., alcohol y cannabis) explican conexiones entre módulos más “blandos” y otros de mayor severidad [@Kandel1992JStudAlcohol]. El lugar central del alcohol como nodo de alto grado/intermediación es esperable dada su prevalencia poblacional y disponibilidad, ampliamente documentadas en la carga global de enfermedad [@GBD2018Lancet], mientras que los nodos puente son dianas clínicas de alto impacto porque conectan perfiles de consumo que, de otro modo, permanecerían segregados [@Jones2021MBR]. La modularidad observada en la red bipartita sugiere que conviene diseñar intervenciones segmentadas por comunidades (p. ej., paquetes integrales para “depresores”, estrategias de reducción de daños para combinaciones estimulante–depresor, etc.) en lugar de abordar cada sustancia de forma aislada [@FortunatoHric2016PhysRep].
+
 
 ## Estadísticas Descriptivas de la Red Bipartita Proyectada 
+
+La proyección unipartita de la red paciente–sustancia, basada en 22 sustancias, resulta en una estructura densamente conectada que evidencia la intensidad del policonsumo en Chile.  La red incluye 188 enlaces, lo que implica que casi todos los pares de sustancias aparecen conjuntamente en las historias de los pacientes.  Esta densidad elevada (0,81) tiene efectos directos en la topología: el diámetro es igual a 2 y la longitud de camino media es apenas 1,19.  En la práctica esto significa que cualquier sustancia está a uno o dos pasos de cualquier otra, lo que refleja que los consumidores suelen combinar múltiples drogas en pocas combinaciones distintas.  La red proyectada presenta una fuerte tendencia a formar tríadas (coeficientes de clustering global y medio de 0,88 y 0,91, respectivamente), un rasgo coherente con patrones de policonsumo en los que se suman varias sustancias en un mismo episodio.  La distribución de grados es relativamente homogénea, con una media de 17,9 conexiones, un mínimo de 6 y un máximo de 21; en otras palabras, la mayoría de las drogas están conectadas con casi todas las demás.  A pesar de este carácter “completo”, la assortatividad negativa (–0,26) indica que las sustancias con muchos enlaces tienden a asociarse con sustancias menos conectadas, lo que sugiere la existencia de drogas “puente” que vinculan grupos de consumo distintos.  La modularidad casi nula (0,006) confirma que no existen divisiones claras en comunidades: la proyección está dominada por una gran comunidad densa y homogénea, más que por subgrupos separados de consumo.
+
+Desde el punto de vista estadístico, la concentración de enlaces se refleja en las medidas de centralidad.  La media de los grados es 17,09, con una desviación estándar de 4,15 y un coeficiente de variación de 0,24; esta regularidad contrasta con la enorme variabilidad de la fuerza (suma de pesos de los enlaces), donde la media de 21,279 coocurrencias oculta una dispersión que se extiende desde 20 hasta 130,582 coocurrencias y un coeficiente de variación de 1,99.  Algunas sustancias como **Pasta Base**, **Alcohol** y **Marihuana** concentran la mayor parte de las apariciones, acumulando decenas de miles de coocurrencias y constituyendo los nodos con mayor grado, fuerza y PageRank.  Estas drogas populares actúan como “núcleos” del policonsumo, ya que aparecen en la mayoría de las combinaciones de drogas y sustentan la densidad de la red.  La medida de cercanía varía en un rango estrecho (media 0,257; coeficiente de variación 0,26), lo que confirma que prácticamente todas las sustancias están a distancia similar del resto.  En contraste, la intermediación muestra una distribución altamente sesgada: aunque la media es de solo 0,071, la máxima intermediación asciende a 0,42 y la desviación estándar es 0,105.  Esto revela que unas pocas sustancias ejercen un papel de puente entre combinaciones de consumo que de otro modo estarían desconectadas.
+
+El análisis de las centralidades individuales permite identificar sustancias clave.  **Fenilciclidina (PCP)** posee la intermediación más elevada, pese a su grado modesto; esto la convierte en un puente crítico entre subgrupos de drogas y sugiere que, aunque poco consumida, conecta patrones de consumo distintos.  **Heroína** y **Hongos** también presentan valores altos de intermediación y cercanía, señalando que cuando aparecen crean rutas alternativas entre conjuntos de sustancias.  Por su parte, **Crack**, **Hipnóticos** y **Éxtasis/MDMA** combinan un grado alto con valores intermedios de intermediación; son drogas muy presentes en el policonsumo y a la vez contribuyen a la cohesión general de la red.  En contraste, **Esteroides anabólicos** o **Metadona** tienen baja intermediación y escasa fuerza, actuando como extremos periféricos del policonsumo.  La visualización ponderada por intermediación confirma que solo unas pocas sustancias, entre ellas Fenilciclidina, Heroína y Hongos, destacan por su tamaño de nodo, mientras que la mayoría se agrupa alrededor de los grandes núcleos de consumo.
+
 
 ```{r network-metrics-complete}
 #| tbl-cap: "Estadísticas descriptivas completas de la red bipartita proyectada"
@@ -1899,16 +1918,30 @@ ggraph(g_viz, layout = 'fr') +
         plot.subtitle = element_text(size = 11))
 ```
 
-# Pregunta Comparativa
+## Pregunta Comparativa
 
 **¿La red bipartita proyectada de co-ocurrencia de sustancias presenta patrones de formación aleatorios o sigue principios de organización específicos?**
 
-## Hipótesis
+La estructura extremadamente densa, con alto clustering y diámetro igual a 2, sugiere que la proyección paciente–sustancia se aleja de una red puramente aleatoria y podría responder a mecanismos de popularidad y compatibilidad de consumo.  
 
-1. **H0 (Modelo Aleatorio - Erdős-Rényi)**: La red se forma por asociaciones aleatorias entre sustancias
-2. **H1 (Modelo Scale-Free - Barabási-Albert)**: La red sigue un proceso de adhesión preferencial con distribución de grado de ley de potencias
+##  Hipótesis frente a modelos nulos
+
+**H1 (Aleatorio/Erdős–Rényi):** La densidad y el clustering global de la red observada no son consistentes con una red Erdős–Rényi de igual tamaño y número de enlaces; se espera **clustering observado muy superior al clustering ER** y una longitud de camino media menor que la simulada.  
+**H2 (Apego preferencial/Barabási–Albert):** La distribución de fuerza y la presencia de hubs de alto grado sugieren **colas pesadas**; se espera que un modelo BA reproduzca mejor la heterogeneidad de grados y fuerzas, pero **subestime el clustering** y **sobrestime** la longitud de camino respecto de lo observado.
+
+##  Modelos nulos y justificación
+
+Se emplearán dos modelos nulos para la comparación:
+
+- **Erdős–Rényi G(n, m):** Representa una línea base puramente aleatoria que preserva tamaño y número de enlaces; sirve para contrastar densidad y clustering esperados por azar.  
+- **Barabási–Albert (BA):** Captura un proceso de crecimiento con apego preferencial; es pertinente dada la presencia de hubs (Pasta Base, Alcohol, Marihuana) y la variabilidad extrema de fuerza observada.
+
 
 ## Implementación de Modelos Nulos y Bootstrapping
+
+Se generarón **5000 réplicas** por cada modelo nulo calibrando parámetros para igualar **n = 22** y el **grado medio ≈ 17,09** (o m equivalente en BA).  Para cada réplica se calcularón: **densidad, diámetro, longitud de camino media, clustering global y medio, modularidad, assortatividad, distribución de grado** (media, desviación y índice de Gini), **fuerza total por nodo** (media, desviación y Gini) y **centralidades** (intermediación, eigenvector, PageRank; medias y máximos).  Se comparó cada métrica observada contra la distribución simulada mediante **estadísticas empíricas** (z‑scores y p‑values por cola) y se reportarón gráficos de densidad y tablas.
+
+
 
 ```{r null-models-implementation}
 # Parámetros de la red real
@@ -1965,8 +1998,8 @@ ba_ci <- calculate_ci(ba_metrics)
 
 # Crear dataframe con resultados incluyendo intervalos de confianza
 results_df <- data.frame(
-  Métrica = c("Clustering", "Path Length", "Diameter", 
-              "Assortativity", "Max Degree", "Degree Variance"),
+  Métrica = c("Agrupamiento", "Longitud de camino", "Diámetro", 
+              "Asortatividad", "Grado máximo", "Varianza de grado"),
   Real = real_metrics,
   ER_mean = er_ci$mean,
   ER_CI_lower = er_ci$lower,
@@ -1984,7 +2017,7 @@ results_df %>%
   ) %>%
   select(Métrica, Real, ER, BA) %>%
   kable(format = "html",
-        caption = "Comparación de métricas: Red real vs Modelos nulos (1000 simulaciones, IC 95%)",
+        caption = "Comparación de métricas: Red real vs Modelos nulos (5000 simulaciones, IC 95%)",
         col.names = c("Métrica", "Red Real", "Erdős-Rényi [IC 95%]", "Barabási-Albert [IC 95%]"),
         row.names = F) %>%
   kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
@@ -2294,7 +2327,15 @@ test_results %>%
   kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
 ```
 
-## Interpretación y Conclusiones
+## Resultados de la simulación y comparación con modelos nulos
+
+Tras la implementación de mil simulaciones para los modelos de Erdős–Rényi y Barabási–Albert, se construyó una tabla de comparación que resume las métricas clave de la red real frente a los intervalos de confianza (IC 95 %) de ambos modelos.  El coeficiente de agrupamiento de la red observada (0,884) supera tanto al valor medio de las redes aleatorias (0,812) como al de las redes scale‑free (0,708), y además se sitúa por encima de los límites superiores de sus intervalos de confianza; esto confirma que el policonsumo presenta patrones de triadicidad más fuertes de los que cabría esperar bajo mecanismos generativos simples.  La longitud media de los caminos en la red real (≈ 4,21 pasos) es varias veces mayor que las longitudes típicas en las simulaciones de Erdős–Rényi (≈ 1,19) y Barabási–Albert (≈ 1,34), y el diámetro observado (10) también rebasa con creces el valor constante 2 obtenido en ambos modelos.  Estas diferencias sugieren que, aunque la red proyectada es densa, sus conexiones no se organizan en caminos cortos como en los modelos nulos, sino que existen rutas más largas que podrían corresponder a combinaciones de consumo infrecuentes o a subgrupos más distantes.
+
+En cuanto a la estructura de grado, la asortatividad de la red real (–0,26) indica una desproporción mayor entre nodos de alto y bajo grado que la esperada en los modelos nulos; los valores simulados se centran en –0,09 para Erdős–Rényi y –0,13 para Barabási–Albert.  El grado máximo de la red proyectada (21) se encuentra dentro de los rangos esperados por ambos modelos, lo que implica que el número de vecinos del nodo más conectado no difiere sustancialmente de lo que produciría el azar o el apego preferencial.  Sin embargo, la varianza de los grados es mucho mayor en la red real (17,23) que en las simulaciones aleatorias (≈ 3,02) y aun superior a la varianza derivada de las redes Barabási–Albert (≈ 11,45), lo cual refleja una heterogeneidad extrema en la forma en que las sustancias se combinan en el policonsumo.  Estas tendencias se visualizan en las distribuciones bootstrap de las métricas clave, donde los valores de la red real aparecen como líneas rojas verticales situadas fuera de las densidades simuladas para el clustering, la longitud de camino, la asortatividad y la varianza del grado.
+
+Los análisis estadísticos confirman estas diferencias: el coeficiente de agrupamiento difiere significativamente de ambos modelos (Z ≈ 2,7 y p ≈ 0,007 para Erdős–Rényi; Z ≈ 23,8 y p < 0,001 para Barabási–Albert), y lo mismo ocurre con la longitud de camino y el diámetro, cuyos Z‑scores son extremadamente altos y p‑valores prácticamente nulos.  La asortatividad negativa del policonsumo es también distinta a la de las redes nulas, con Z‑scores de –5,40 (ER) y –2,62 (BA), lo que indica un patrón de mezcla más disasortativo que el previsto por los modelos.  Sólo el grado máximo no muestra diferencias significativas con respecto a las redes aleatorias (p ≈ 0,17) y es marginalmente distinto del modelo de apego preferencial (p ≈ 0,041), lo cual sugiere que la presencia de hubs de alto grado puede explicarse por ambos mecanismos.  La varianza del grado, en cambio, es significativamente mayor en la red observada para ambos modelos (p < 0,001), lo que subraya el carácter fuertemente heterogéneo de las conexiones.
+
+Finalmente, un cuadro de síntesis sobre el ajuste global de los modelos señala que el modelo de Erdős–Rényi no captura la estructura del policonsumo: falla en reproducir el clustering, la longitud de camino, la asortatividad y la distribución de grados, y su ajuste global se califica como bajo.  El modelo Barabási–Albert, por su parte, obtiene un ajuste global moderado‑alto porque reproduce de manera razonable la heterogeneidad del grado, pero sigue sin alcanzar los niveles de clustering y de desasortatividad observados.  En conclusión, ninguno de los modelos nulos considerados es capaz de replicar simultáneamente la fuerte transitividad, la longitud de camino elevada, la asimetría de las conexiones y la variabilidad extrema del grado presentes en la red de policonsumo.  Esto respalda la idea de que el fenómeno no responde a un único mecanismo generativo simple, sino a una combinación de factores de popularidad, compatibilidad y contexto que deberá investigarse en la siguiente etapa.
 
 ```{r summary-table}
 #| tbl-cap: "Resumen de ajuste de modelos"
