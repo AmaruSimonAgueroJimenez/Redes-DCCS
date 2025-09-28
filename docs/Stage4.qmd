@@ -1,6 +1,5 @@
 ---
-title: "Análisis Comparativo de Redes de Policonsumo"
-subtitle: "Red de Co-ocurrencia vs Red Bipartita"
+title: "Análisis de Redes del Treatment Outcomes Profile en Cohortes de Rehabilitación de Consumo de Sustancias en Chile"
 author:
   - name: "Amaru Simón Agüero Jiménez"
     email: "aaguero@miaundes.cl"
@@ -28,15 +27,31 @@ execute:
   fig-height: 6
 ---
 
-# Introducción 
+# Introducción
 
-Los trastornos por uso de sustancias (TUS) constituyen una de las principales causas de carga de enfermedad y mortalidad evitable a escala global. En 2016 se calculó que más de 100 millones de personas sufrían trastorno por consumo de alcohol y decenas de millones presentaban dependencia de opioides, cannabis o cocaína [@Volkow2023]. La frecuente comorbilidad psiquiátrica, depresión, trastornos de ansiedad, psicosis o trastornos de personalidad multiplica la severidad clínica y los costes sociosanitarios [@Connery2020]. Estudios hospitalarios europeos y norteamericanos muestran que alrededor del 20 % de las admisiones psiquiátricas corresponden a pacientes de sexo femenino con diagnóstico dual, fenómeno que favorece re-ingresos y estancias prolongadas[@GomezSanchezLafuente2022].
+Los trastornos por uso de sustancias (TUS) constituyen una de las principales causas de carga de enfermedad y mortalidad evitable a escala global. En 2016 se calculó que más de 100 millones de personas sufrían trastorno por consumo de alcohol y decenas de millones presentaban dependencia de opioides, cannabis o cocaína [@Volkow2023]. La frecuente comorbilidad psiquiátrica con depresión, trastornos de ansiedad, psicosis o trastornos de personalidad multiplica la severidad clínica y los costes sociosanitarios [@Connery2020]. Estudios hospitalarios europeos y norteamericanos muestran que alrededor del 20% de las admisiones psiquiátricas corresponden a pacientes de sexo femenino con diagnóstico dual, fenómeno que favorece re‑ingresos y estancias prolongadas [@GomezSanchezLafuente2022].
 
-En Chile, las encuestas nacionales sitúan la prevalencia de abuso o dependencia de sustancias entre el 11 % y el 20 %, una de las más elevadas de Latinoamérica. Los registros hospitalarios concuerdan con las cifras internacionales: alrededor de una quinta parte de los internados en psiquiatría presenta un TCS como diagnóstico primario o secundario. Esta convergencia evidencia que la hospitalización psiquiátrica es un desenlace clínico crítico en la trayectoria de las adicciones, razón por la cual identificar sus factores determinantes resulta esencial para planificar intervenciones preventivas, asignar recursos y reducir la carga asistencial [@Connery2020; @Saxena2011; @GomezSanchezLafuente2016; @Rojas2002].
+En Chile, las encuestas nacionales sitúan la prevalencia de abuso o dependencia de sustancias entre el 11% y el 20%, una de las más elevadas de Latinoamérica. Los registros hospitalarios concuerdan con las cifras internacionales: alrededor de una quinta parte de los internados en psiquiatría presenta un TUS como diagnóstico primario o secundario. Esta convergencia evidencia que la hospitalización psiquiátrica es un desenlace clínico crítico en la trayectoria de las adicciones, razón por la cual identificar sus factores determinantes resulta esencial para planificar intervenciones preventivas, asignar recursos y reducir la carga asistencial [@Connery2020; @Saxena2011; @GomezSanchezLafuente2016; @Rojas2002].
+
+En respuesta a esta problemática, el Servicio Nacional para la Prevención y Rehabilitación del Consumo de Drogas y Alcohol (SENDA) gestiona el Sistema de Tratamiento (SISTRAT), que recopila información de miles de episodios de tratamiento en centros públicos y privados. Como instrumento central, se utiliza el Treatment Outcomes Profile (TOP), un cuestionario de 20 ítems desarrollado en Inglaterra y adaptado al contexto chileno [@CastilloCarniglia2015]. El TOP registra consumo de sustancias en el último mes, conductas de inyección, situación de vivienda, actividad laboral, vínculos familiares, crimen y problemas de salud mental, permitiendo monitorear la evolución de los pacientes a lo largo de distintas etapas del tratamiento.
+
+Para analizar la complejidad de las interacciones entre síntomas y factores psicosociales, el enfoque de análisis de redes ha cobrado importancia en psicología y psiquiatría. Este enfoque modela los ítems como nodos y las correlaciones condicionales como aristas, revelando cómo las variables se influyen mutuamente. La centralidad de fuerza y la influencia esperada permiten identificar los nodos más relevantes en cada red, facilitando la priorización de intervenciones [@Spiller2020]. En el contexto de las adicciones, este enfoque puede arrojar luz sobre los mecanismos que conducen a recaídas y ayudar a diseñar estrategias terapéuticas más efectivas.
 
 # Objetivos e Hipótesis
 
-Este análisis examina las redes psicométricas del Treatment Outcome Profile (TOP) en contexto longitudinal, evaluando la evolución de las relaciones entre consumo de sustancias, salud, inclusión social y riesgo durante el tratamiento de rehabilitación.
+## Objetivo general
+
+Evaluar redes de interacciones entre síntomas y factores psicosociales registrados por el TOP en distintas etapas del tratamiento de rehabilitación de drogas en Chile, identificando los nodos más influyentes y sus implicancias clínicas.
+
+## Objetivos específicos
+
+**1)** Elavorar redes de asociación condicional para cada etapa del tratamiento (diagnóstico, atención ambulatoria, atención residencial, alta y reingreso) usando el método EBICglasso para regularización.
+
+**2)** Estimar métricas de centralidad de fuerza e influencia esperada para cada nodo y determinar los ítems que presentan mayor influencia en cada red.
+
+**3)** Evaluar diferencias en la estructura y la fuerza global entre las redes de etapas consecutivas con la prueba de comparación de redes (Network Comparison Test)
+
+**4)** Modelar la evolución longitudinal de los nodos centrales mediante análisis de efectos mixtos y paneles cruzados, explorando la direccionalidad entre síntomas y recaídas.
 
 ## Hipótesis de Investigación
 
@@ -53,11 +68,59 @@ Este análisis examina las redes psicométricas del Treatment Outcome Profile (T
 
 ## Descripción de los datos
 
-Este es un estudio de cohorte retrospectiva de pacientes adultos en tratamiento por consumo de sustancias, con datos otorgados por el Servicio Nacional para la Prevención y Rehabilitación del Consumo de Drogas y Alcohol de Chile (SENDA) en convenio con el núcleo milenio de ánalisis de políticas públicas de drogas (nDP). La cohorte se construyó vinculando los registros administrativos de los pacientes (n = 223,061 episodios de tratamiento entre 97,698 personas en las 16 regiones del país).
+Este es un estudio de cohorte retrospectiva de pacientes adultos en tratamiento por consumo de sustancias, con datos otorgados por el Servicio Nacional para la Prevención y Rehabilitación del Consumo de Drogas y Alcohol de Chile (SENDA) en convenio con el núcleo milenio de ánalisis de políticas públicas de drogas (nDP). La cohorte se construyó vinculando los registros administrativos de los pacientes con TOP (n = 223,061 episodios de tratamiento entre 97,698 personas en las 16 regiones del país).
 
 Estos datos incluyen múltiples variables relacionadas al consumo y tratamiento rehabilitador de drogas. Entre estas variables esta la *sustancia principal*  por la cual se trató al paciente y sustancias secundarias (alcohol, pasta base de cocaína, cocaína, marihuana, depresores del SNC u otras sustancias. Tambien está presente el número de reingresos a tratamiento (retratamientos, categorizados en 0, 1, 2, 3 o más reingresos), el *tipo de plan de tratamiento* (ambulatorio vs. residencial) y el historial clínico de salud mental de los pacientes.
 
 El registro de pacientes en tratamiento se realizó en una plataforma electrónica denominada SISTRAT, que contenía información sociodemográfica, datos sobre el estado de salud y patrones de consumo de sustancias, entre otras variables, además de información sobre el propio tratamiento (p. ej., fecha de ingreso, egreso, tipo de tratamiento). Las base de datos se vincularon de forma determinista mediante un hash de 64 caracteres resultante del cifrado (con un algoritmo SHA-256) del número de identificación único de cada persona.
+
+
+## Preparación y armonización de variables
+A partir de los registros TOP se construyeron cuatro dominios analíticos: **Uso de sustancias** (alcohol, cannabis, cocaína, pasta base, benzodiacepinas, otra sustancia), **Transgresión** (hurto, robo, venta de drogas, riña, violencia intrafamiliar), **Salud** (psicológica, física) y **Funcionamiento** (días trabajo, días educación), además de **calidad de vida**. Los puntajes continuos se estandarizaron por etapa y las variables dicotómicas se mantuvieron como indicadores binarios. Para manejar mezclas de escalas y posibles desviaciones de normalidad, la matriz de asociación se estimó con estrategias robustas compatibles con **modelos copulares gaussianos** / **no-paranormales** [@Liu2012].
+
+## Estimación de redes por etapa
+Para cada etapa se estimó una red de **correlaciones parciales** bajo un **modelo gaussiano de campos aleatorios (GGM)** escaso. La matriz de precisión $\Theta$ se obtuvo mediante penalización $\ell_1$ (graphical lasso), que maximiza la verosimilitud penalizada y promueve soluciones dispersas [@Friedman2008]. La selección del grado de regularización se realizó con el **criterio EBIC**, que extiende BIC para espacio de grafos de alta dimensión, con parámetro $\gamma$ intermedio (aprox. 0,5) para equilibrar ajuste y parsimonia [@FoygelDrton2011]. Los **pesos de arista** se reportan como correlaciones parciales estandarizadas:
+
+$$
+w_{ij}=-\frac{\widehat\Theta_{ij}}{\sqrt{\widehat\Theta_{ii}\,\widehat\Theta_{jj}}}.
+$$
+
+## Métricas globales y nodales
+De cada red se extrajeron métricas **globales** —densidad, diámetro, longitud de camino media y coeficientes de **clustering**— siguiendo la tradición de redes de **pequeño-mundo** [@WattsStrogatz1998], y **modularidad** sobre particiones detectadas por maximización heurística de $Q$ [@Blondel2008]. A nivel de **nodo** se calcularon:
+
+- **Fuerza**: $s_i=\sum_j |w_{ij}|$ (influencia agregada);
+- **Betweenness**/**closeness** basadas en geodésicas;
+- **Centralidad de eigenvector** (influencia recursiva);
+- **PageRank** (vector estacionario de un paseo aleatorio) [@BrinPage1998].
+
+La precisión e interpretabilidad de estas métricas en redes psicométricas se discute en guías metodológicas recientes, que se siguieron para la evaluación de estabilidad y reporte responsable [@EpskampBRM2018; @EpskampFried2018].
+
+## Puentes entre dominios
+Con la partición a priori (Uso, Transgresión, Salud, Funcionamiento) se estimó **centralidad puente** (bridge strength) e **influencia puente esperada**, para identificar nodos que conectan comunidades y potenciales puntos de intervención traslacional [@Jones2019].
+
+## Comparación con modelos nulos
+Para valorar si la organización observada excede lo esperable por azar, cada red se contrastó con distribuciones de referencia simuladas: **$G(n,p)$ (Gilbert)** ajustando $p$ a la densidad observada [@Gilbert1959] y **preferential attachment** tipo **Barabási–Albert** con $m\approx \bar k/2$ [@BarabasiAlbert1999]. Sobre métricas clave (clustering, longitud de camino, diámetro, asortatividad, grado máximo, varianza del grado) se obtuvieron medias, bandas de cuantiles y **$z$-scores**:
+$$
+z=\frac{T_{\text{obs}}-\mu_0}{\sigma_0}.
+$$
+Se reportan *p* bilaterales por simulación.
+
+## Invarianza estructural entre etapas
+Las diferencias entre redes de etapas (p. ej., **Inicio vs 6 m**; **Inicio vs 12 m**) se evaluaron con un **test de permutación** para comparación de redes, que contrasta (i) **invarianza de estructura**, (ii) **aristas específicas** y (iii) **diferencia de fuerza global** $\Delta S=\sum_{i<j}|w_{ij}^{(1)}|-\sum_{i<j}|w_{ij}^{(2)}|$ [@vanBorkulo2023]. Los *p*-values se obtienen permutando etiquetas de grupo y re-estimando redes.
+
+## Redes de cambio (deltas apareados)
+Para transiciones **Inicio→3 m**, **3→6 m** y **6→12 m**, en submuestras apareadas por individuo, se construyó una matriz de **deltas** $\Delta X=X_{t_2}-X_{t_1}$ y se estimó un GGM regularizado sobre $\Delta X$. Las aristas positivas indican **co-mejoras / co-empeoramientos**; las negativas sugieren **compensaciones** entre dominios.
+
+## Modelos longitudinales complementarios
+Con el fin de describir trayectorias y heterogeneidad interindividual, se ajustaron **modelos lineales mixtos** con intercepto (y, cuando fue posible, pendiente) aleatoria por sujeto:
+$$
+y_{it}=\beta_0+\beta_1 t+\boldsymbol{\beta}^\top\mathbf{z}_{it}+b_{0i}+b_{1i}t+\varepsilon_{it},
+$$
+siguiendo el enfoque clásico de efectos aleatorios para datos longitudinales [@LairdWare1982; @Bates2015]. Como análisis **exploratorio** y no inferencial, se calcularon **correlaciones *cross-lagged*** entre nodos de etapas consecutivas (p. ej., Inicio→6 m), interpretadas con cautela a la luz de las limitaciones del CLPM tradicional [@Hamaker2015].
+
+## Transparencia y robustez
+Para métricas de centralidad agregadas se reportan promedios con **IC 95 %** por aproximación normal (descriptivos). La evaluación de exactitud/estabilidad de redes se guio por buenas prácticas para redes psicológicas (re-muestreo, sensibilidad a regularización y a selección de correlaciones) [@EpskampBRM2018]. 
+
 
 ```{r}
 # =====================================================
@@ -108,6 +171,7 @@ pkgs <- c(
   # grafos/visualización
   "ggraph", "tidygraph", "corrplot", "patchwork", "kableExtra", "plotly"
 ) |> unique()
+
 
 # 2) Carga de paquetes (instala si faltan) ----
 ensure_packages(pkgs)
@@ -781,25 +845,6 @@ if (file.exists(output_rds)) {
 ```
 
 # Resultados
-
-```{r}
-#| label: setup-libraries
-#| include: false
-
-library(tidyverse)
-library(qgraph)
-library(NetworkComparisonTest)
-library(networktools)
-library(igraph)
-library(tidygraph)
-library(ggraph)
-library(kableExtra)
-library(corrplot)
-library(lme4)
-library(lmerTest)
-library(broom.mixed)
-library(patchwork)
-```
 
 ## Configuración de Funciones Auxiliares
 

@@ -8,7 +8,7 @@
 
 <meta name="author" content="Amaru Simón Agüero Jiménez">
 
-<title>Análisis Comparativo de Redes de Policonsumo</title>
+<title>Análisis de Redes del Treatment Outcomes Profile en Cohortes de Rehabilitación de Consumo de Sustancias en Chile</title>
 <style>
 code{white-space: pre-wrap;}
 span.smallcaps{font-variant: small-caps;}
@@ -96,6 +96,35 @@ div.csl-indent {
 <link href="Stage4_files/libs/lightable-0.0.1/lightable.css" rel="stylesheet">
 
 
+  <script src="https://cdnjs.cloudflare.com/polyfill/v3/polyfill.min.js?features=es6"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml-full.js" type="text/javascript"></script>
+
+<script type="text/javascript">
+const typesetMath = (el) => {
+  if (window.MathJax) {
+    // MathJax Typeset
+    window.MathJax.typeset([el]);
+  } else if (window.katex) {
+    // KaTeX Render
+    var mathElements = el.getElementsByClassName("math");
+    var macros = [];
+    for (var i = 0; i < mathElements.length; i++) {
+      var texText = mathElements[i].firstChild;
+      if (mathElements[i].tagName == "SPAN") {
+        window.katex.render(texText.data, mathElements[i], {
+          displayMode: mathElements[i].classList.contains('display'),
+          throwOnError: false,
+          macros: macros,
+          fleqn: false
+        });
+      }
+    }
+  }
+}
+window.Quarto = {
+  typesetMath
+};
+</script>
 
 </head>
 
@@ -110,11 +139,22 @@ div.csl-indent {
   <li><a href="#introducción" id="toc-introducción" class="nav-link active" data-scroll-target="#introducción"><span class="header-section-number">1</span> Introducción</a></li>
   <li><a href="#objetivos-e-hipótesis" id="toc-objetivos-e-hipótesis" class="nav-link" data-scroll-target="#objetivos-e-hipótesis"><span class="header-section-number">2</span> Objetivos e Hipótesis</a>
   <ul>
-  <li><a href="#hipótesis-de-investigación" id="toc-hipótesis-de-investigación" class="nav-link" data-scroll-target="#hipótesis-de-investigación"><span class="header-section-number">2.1</span> Hipótesis de Investigación</a></li>
+  <li><a href="#objetivo-general" id="toc-objetivo-general" class="nav-link" data-scroll-target="#objetivo-general"><span class="header-section-number">2.1</span> Objetivo general</a></li>
+  <li><a href="#objetivos-específicos" id="toc-objetivos-específicos" class="nav-link" data-scroll-target="#objetivos-específicos"><span class="header-section-number">2.2</span> Objetivos específicos</a></li>
+  <li><a href="#hipótesis-de-investigación" id="toc-hipótesis-de-investigación" class="nav-link" data-scroll-target="#hipótesis-de-investigación"><span class="header-section-number">2.3</span> Hipótesis de Investigación</a></li>
   </ul></li>
   <li><a href="#metodología" id="toc-metodología" class="nav-link" data-scroll-target="#metodología"><span class="header-section-number">3</span> Metodología</a>
   <ul>
   <li><a href="#descripción-de-los-datos" id="toc-descripción-de-los-datos" class="nav-link" data-scroll-target="#descripción-de-los-datos"><span class="header-section-number">3.1</span> Descripción de los datos</a></li>
+  <li><a href="#preparación-y-armonización-de-variables" id="toc-preparación-y-armonización-de-variables" class="nav-link" data-scroll-target="#preparación-y-armonización-de-variables"><span class="header-section-number">3.2</span> Preparación y armonización de variables</a></li>
+  <li><a href="#estimación-de-redes-por-etapa" id="toc-estimación-de-redes-por-etapa" class="nav-link" data-scroll-target="#estimación-de-redes-por-etapa"><span class="header-section-number">3.3</span> Estimación de redes por etapa</a></li>
+  <li><a href="#métricas-globales-y-nodales" id="toc-métricas-globales-y-nodales" class="nav-link" data-scroll-target="#métricas-globales-y-nodales"><span class="header-section-number">3.4</span> Métricas globales y nodales</a></li>
+  <li><a href="#puentes-entre-dominios" id="toc-puentes-entre-dominios" class="nav-link" data-scroll-target="#puentes-entre-dominios"><span class="header-section-number">3.5</span> Puentes entre dominios</a></li>
+  <li><a href="#comparación-con-modelos-nulos" id="toc-comparación-con-modelos-nulos" class="nav-link" data-scroll-target="#comparación-con-modelos-nulos"><span class="header-section-number">3.6</span> Comparación con modelos nulos</a></li>
+  <li><a href="#invarianza-estructural-entre-etapas" id="toc-invarianza-estructural-entre-etapas" class="nav-link" data-scroll-target="#invarianza-estructural-entre-etapas"><span class="header-section-number">3.7</span> Invarianza estructural entre etapas</a></li>
+  <li><a href="#redes-de-cambio-deltas-apareados" id="toc-redes-de-cambio-deltas-apareados" class="nav-link" data-scroll-target="#redes-de-cambio-deltas-apareados"><span class="header-section-number">3.8</span> Redes de cambio (deltas apareados)</a></li>
+  <li><a href="#modelos-longitudinales-complementarios" id="toc-modelos-longitudinales-complementarios" class="nav-link" data-scroll-target="#modelos-longitudinales-complementarios"><span class="header-section-number">3.9</span> Modelos longitudinales complementarios</a></li>
+  <li><a href="#transparencia-y-robustez" id="toc-transparencia-y-robustez" class="nav-link" data-scroll-target="#transparencia-y-robustez"><span class="header-section-number">3.10</span> Transparencia y robustez</a></li>
   </ul></li>
   <li><a href="#resultados" id="toc-resultados" class="nav-link" data-scroll-target="#resultados"><span class="header-section-number">4</span> Resultados</a>
   <ul>
@@ -131,7 +171,7 @@ div.csl-indent {
   <li><a href="#visualización-comparativa-de-todas-las-redes" id="toc-visualización-comparativa-de-todas-las-redes" class="nav-link" data-scroll-target="#visualización-comparativa-de-todas-las-redes"><span class="header-section-number">4.2.8</span> Visualización Comparativa de Todas las Redes</a></li>
   </ul></li>
   <li><a href="#evolución-de-métricas-con-intervalos-de-confianza" id="toc-evolución-de-métricas-con-intervalos-de-confianza" class="nav-link" data-scroll-target="#evolución-de-métricas-con-intervalos-de-confianza"><span class="header-section-number">4.3</span> Evolución de Métricas con Intervalos de Confianza</a></li>
-  <li><a href="#comparación-con-modelos-nulos" id="toc-comparación-con-modelos-nulos" class="nav-link" data-scroll-target="#comparación-con-modelos-nulos"><span class="header-section-number">4.4</span> Comparación con Modelos Nulos</a></li>
+  <li><a href="#comparación-con-modelos-nulos-1" id="toc-comparación-con-modelos-nulos-1" class="nav-link" data-scroll-target="#comparación-con-modelos-nulos-1"><span class="header-section-number">4.4</span> Comparación con Modelos Nulos</a></li>
   <li><a href="#análisis-de-nodos-puente" id="toc-análisis-de-nodos-puente" class="nav-link" data-scroll-target="#análisis-de-nodos-puente"><span class="header-section-number">4.5</span> Análisis de Nodos Puente</a></li>
   <li><a href="#redes-de-cambio" id="toc-redes-de-cambio" class="nav-link" data-scroll-target="#redes-de-cambio"><span class="header-section-number">4.6</span> Redes de Cambio</a>
   <ul>
@@ -155,8 +195,7 @@ div.csl-indent {
 
 <header id="title-block-header" class="quarto-title-block default">
 <div class="quarto-title">
-<h1 class="title">Análisis Comparativo de Redes de Policonsumo</h1>
-<p class="subtitle lead">Red de Co-ocurrencia vs Red Bipartita</p>
+<h1 class="title">Análisis de Redes del Treatment Outcomes Profile en Cohortes de Rehabilitación de Consumo de Sustancias en Chile</h1>
 </div>
 
 
@@ -187,14 +226,26 @@ div.csl-indent {
 
 <section id="introducción" class="level1" data-number="1">
 <h1 data-number="1"><span class="header-section-number">1</span> Introducción</h1>
-<p>Los trastornos por uso de sustancias (TUS) constituyen una de las principales causas de carga de enfermedad y mortalidad evitable a escala global. En 2016 se calculó que más de 100 millones de personas sufrían trastorno por consumo de alcohol y decenas de millones presentaban dependencia de opioides, cannabis o cocaína<span class="citation" data-cites="Volkow2023"><sup><a href="#ref-Volkow2023" role="doc-biblioref">1</a></sup></span>. La frecuente comorbilidad psiquiátrica, depresión, trastornos de ansiedad, psicosis o trastornos de personalidad multiplica la severidad clínica y los costes sociosanitarios<span class="citation" data-cites="Connery2020"><sup><a href="#ref-Connery2020" role="doc-biblioref">2</a></sup></span>. Estudios hospitalarios europeos y norteamericanos muestran que alrededor del 20 % de las admisiones psiquiátricas corresponden a pacientes de sexo femenino con diagnóstico dual, fenómeno que favorece re-ingresos y estancias prolongadas<span class="citation" data-cites="GomezSanchezLafuente2022"><sup><a href="#ref-GomezSanchezLafuente2022" role="doc-biblioref">3</a></sup></span>.</p>
-<p>En Chile, las encuestas nacionales sitúan la prevalencia de abuso o dependencia de sustancias entre el 11 % y el 20 %, una de las más elevadas de Latinoamérica. Los registros hospitalarios concuerdan con las cifras internacionales: alrededor de una quinta parte de los internados en psiquiatría presenta un TCS como diagnóstico primario o secundario. Esta convergencia evidencia que la hospitalización psiquiátrica es un desenlace clínico crítico en la trayectoria de las adicciones, razón por la cual identificar sus factores determinantes resulta esencial para planificar intervenciones preventivas, asignar recursos y reducir la carga asistencial<span class="citation" data-cites="Connery2020 Saxena2011 GomezSanchezLafuente2016 Rojas2002"><sup><a href="#ref-Connery2020" role="doc-biblioref">2</a>,<a href="#ref-Saxena2011" role="doc-biblioref">4</a>–<a href="#ref-Rojas2002" role="doc-biblioref">6</a></sup></span>.</p>
+<p>Los trastornos por uso de sustancias (TUS) constituyen una de las principales causas de carga de enfermedad y mortalidad evitable a escala global. En 2016 se calculó que más de 100 millones de personas sufrían trastorno por consumo de alcohol y decenas de millones presentaban dependencia de opioides, cannabis o cocaína<span class="citation" data-cites="Volkow2023"><sup><a href="#ref-Volkow2023" role="doc-biblioref">1</a></sup></span>. La frecuente comorbilidad psiquiátrica con depresión, trastornos de ansiedad, psicosis o trastornos de personalidad multiplica la severidad clínica y los costes sociosanitarios<span class="citation" data-cites="Connery2020"><sup><a href="#ref-Connery2020" role="doc-biblioref">2</a></sup></span>. Estudios hospitalarios europeos y norteamericanos muestran que alrededor del 20% de las admisiones psiquiátricas corresponden a pacientes de sexo femenino con diagnóstico dual, fenómeno que favorece re‑ingresos y estancias prolongadas<span class="citation" data-cites="GomezSanchezLafuente2022"><sup><a href="#ref-GomezSanchezLafuente2022" role="doc-biblioref">3</a></sup></span>.</p>
+<p>En Chile, las encuestas nacionales sitúan la prevalencia de abuso o dependencia de sustancias entre el 11% y el 20%, una de las más elevadas de Latinoamérica. Los registros hospitalarios concuerdan con las cifras internacionales: alrededor de una quinta parte de los internados en psiquiatría presenta un TUS como diagnóstico primario o secundario. Esta convergencia evidencia que la hospitalización psiquiátrica es un desenlace clínico crítico en la trayectoria de las adicciones, razón por la cual identificar sus factores determinantes resulta esencial para planificar intervenciones preventivas, asignar recursos y reducir la carga asistencial<span class="citation" data-cites="Connery2020 Saxena2011 GomezSanchezLafuente2016 Rojas2002"><sup><a href="#ref-Connery2020" role="doc-biblioref">2</a>,<a href="#ref-Saxena2011" role="doc-biblioref">4</a>–<a href="#ref-Rojas2002" role="doc-biblioref">6</a></sup></span>.</p>
+<p>En respuesta a esta problemática, el Servicio Nacional para la Prevención y Rehabilitación del Consumo de Drogas y Alcohol (SENDA) gestiona el Sistema de Tratamiento (SISTRAT), que recopila información de miles de episodios de tratamiento en centros públicos y privados. Como instrumento central, se utiliza el Treatment Outcomes Profile (TOP), un cuestionario de 20 ítems desarrollado en Inglaterra y adaptado al contexto chileno<span class="citation" data-cites="CastilloCarniglia2015"><sup><a href="#ref-CastilloCarniglia2015" role="doc-biblioref">7</a></sup></span>. El TOP registra consumo de sustancias en el último mes, conductas de inyección, situación de vivienda, actividad laboral, vínculos familiares, crimen y problemas de salud mental, permitiendo monitorear la evolución de los pacientes a lo largo de distintas etapas del tratamiento.</p>
+<p>Para analizar la complejidad de las interacciones entre síntomas y factores psicosociales, el enfoque de análisis de redes ha cobrado importancia en psicología y psiquiatría. Este enfoque modela los ítems como nodos y las correlaciones condicionales como aristas, revelando cómo las variables se influyen mutuamente. La centralidad de fuerza y la influencia esperada permiten identificar los nodos más relevantes en cada red, facilitando la priorización de intervenciones<span class="citation" data-cites="Spiller2020"><sup><a href="#ref-Spiller2020" role="doc-biblioref">8</a></sup></span>. En el contexto de las adicciones, este enfoque puede arrojar luz sobre los mecanismos que conducen a recaídas y ayudar a diseñar estrategias terapéuticas más efectivas.</p>
 </section>
 <section id="objetivos-e-hipótesis" class="level1" data-number="2">
 <h1 data-number="2"><span class="header-section-number">2</span> Objetivos e Hipótesis</h1>
-<p>Este análisis examina las redes psicométricas del Treatment Outcome Profile (TOP) en contexto longitudinal, evaluando la evolución de las relaciones entre consumo de sustancias, salud, inclusión social y riesgo durante el tratamiento de rehabilitación.</p>
-<section id="hipótesis-de-investigación" class="level2" data-number="2.1">
-<h2 data-number="2.1" class="anchored" data-anchor-id="hipótesis-de-investigación"><span class="header-section-number">2.1</span> Hipótesis de Investigación</h2>
+<section id="objetivo-general" class="level2" data-number="2.1">
+<h2 data-number="2.1" class="anchored" data-anchor-id="objetivo-general"><span class="header-section-number">2.1</span> Objetivo general</h2>
+<p>Evaluar redes de interacciones entre síntomas y factores psicosociales registrados por el TOP en distintas etapas del tratamiento de rehabilitación de drogas en Chile, identificando los nodos más influyentes y sus implicancias clínicas.</p>
+</section>
+<section id="objetivos-específicos" class="level2" data-number="2.2">
+<h2 data-number="2.2" class="anchored" data-anchor-id="objetivos-específicos"><span class="header-section-number">2.2</span> Objetivos específicos</h2>
+<p><strong>1)</strong> Elavorar redes de asociación condicional para cada etapa del tratamiento (diagnóstico, atención ambulatoria, atención residencial, alta y reingreso) usando el método EBICglasso para regularización.</p>
+<p><strong>2)</strong> Estimar métricas de centralidad de fuerza e influencia esperada para cada nodo y determinar los ítems que presentan mayor influencia en cada red.</p>
+<p><strong>3)</strong> Evaluar diferencias en la estructura y la fuerza global entre las redes de etapas consecutivas con la prueba de comparación de redes (Network Comparison Test)</p>
+<p><strong>4)</strong> Modelar la evolución longitudinal de los nodos centrales mediante análisis de efectos mixtos y paneles cruzados, explorando la direccionalidad entre síntomas y recaídas.</p>
+</section>
+<section id="hipótesis-de-investigación" class="level2" data-number="2.3">
+<h2 data-number="2.3" class="anchored" data-anchor-id="hipótesis-de-investigación"><span class="header-section-number">2.3</span> Hipótesis de Investigación</h2>
 <p><strong>H1</strong>: La densidad de la red (fuerza global) disminuye significativamente entre el ingreso y los 6-12 meses de tratamiento, reflejando una desacoplación de síntomas.</p>
 <p><strong>H2</strong>: Las variables de salud (psicológica/física) aumentan su centralidad de puente entre dominios al avanzar el tratamiento.</p>
 <p><strong>H3</strong>: Los cambios en consumo de sustancias entre etapas predicen cambios en salud y calidad de vida (análisis de transiciones).</p>
@@ -205,9 +256,59 @@ div.csl-indent {
 <h1 data-number="3"><span class="header-section-number">3</span> Metodología</h1>
 <section id="descripción-de-los-datos" class="level2" data-number="3.1">
 <h2 data-number="3.1" class="anchored" data-anchor-id="descripción-de-los-datos"><span class="header-section-number">3.1</span> Descripción de los datos</h2>
-<p>Este es un estudio de cohorte retrospectiva de pacientes adultos en tratamiento por consumo de sustancias, con datos otorgados por el Servicio Nacional para la Prevención y Rehabilitación del Consumo de Drogas y Alcohol de Chile (SENDA) en convenio con el núcleo milenio de ánalisis de políticas públicas de drogas (nDP). La cohorte se construyó vinculando los registros administrativos de los pacientes (n = 223,061 episodios de tratamiento entre 97,698 personas en las 16 regiones del país).</p>
+<p>Este es un estudio de cohorte retrospectiva de pacientes adultos en tratamiento por consumo de sustancias, con datos otorgados por el Servicio Nacional para la Prevención y Rehabilitación del Consumo de Drogas y Alcohol de Chile (SENDA) en convenio con el núcleo milenio de ánalisis de políticas públicas de drogas (nDP). La cohorte se construyó vinculando los registros administrativos de los pacientes con TOP (n = 223,061 episodios de tratamiento entre 97,698 personas en las 16 regiones del país).</p>
 <p>Estos datos incluyen múltiples variables relacionadas al consumo y tratamiento rehabilitador de drogas. Entre estas variables esta la <em>sustancia principal</em> por la cual se trató al paciente y sustancias secundarias (alcohol, pasta base de cocaína, cocaína, marihuana, depresores del SNC u otras sustancias. Tambien está presente el número de reingresos a tratamiento (retratamientos, categorizados en 0, 1, 2, 3 o más reingresos), el <em>tipo de plan de tratamiento</em> (ambulatorio vs.&nbsp;residencial) y el historial clínico de salud mental de los pacientes.</p>
 <p>El registro de pacientes en tratamiento se realizó en una plataforma electrónica denominada SISTRAT, que contenía información sociodemográfica, datos sobre el estado de salud y patrones de consumo de sustancias, entre otras variables, además de información sobre el propio tratamiento (p.&nbsp;ej., fecha de ingreso, egreso, tipo de tratamiento). Las base de datos se vincularon de forma determinista mediante un hash de 64 caracteres resultante del cifrado (con un algoritmo SHA-256) del número de identificación único de cada persona.</p>
+</section>
+<section id="preparación-y-armonización-de-variables" class="level2" data-number="3.2">
+<h2 data-number="3.2" class="anchored" data-anchor-id="preparación-y-armonización-de-variables"><span class="header-section-number">3.2</span> Preparación y armonización de variables</h2>
+<p>A partir de los registros TOP se construyeron cuatro dominios analíticos: <strong>Uso de sustancias</strong> (alcohol, cannabis, cocaína, pasta base, benzodiacepinas, otra sustancia), <strong>Transgresión</strong> (hurto, robo, venta de drogas, riña, violencia intrafamiliar), <strong>Salud</strong> (psicológica, física) y <strong>Funcionamiento</strong> (días trabajo, días educación), además de <strong>calidad de vida</strong>. Los puntajes continuos se estandarizaron por etapa y las variables dicotómicas se mantuvieron como indicadores binarios. Para manejar mezclas de escalas y posibles desviaciones de normalidad, la matriz de asociación se estimó con estrategias robustas compatibles con <strong>modelos copulares gaussianos</strong> / <strong>no-paranormales</strong><span class="citation" data-cites="Liu2012"><sup><a href="#ref-Liu2012" role="doc-biblioref">9</a></sup></span>.</p>
+</section>
+<section id="estimación-de-redes-por-etapa" class="level2" data-number="3.3">
+<h2 data-number="3.3" class="anchored" data-anchor-id="estimación-de-redes-por-etapa"><span class="header-section-number">3.3</span> Estimación de redes por etapa</h2>
+<p>Para cada etapa se estimó una red de <strong>correlaciones parciales</strong> bajo un <strong>modelo gaussiano de campos aleatorios (GGM)</strong> escaso. La matriz de precisión <span class="math inline">\(\Theta\)</span> se obtuvo mediante penalización <span class="math inline">\(\ell_1\)</span> (graphical lasso), que maximiza la verosimilitud penalizada y promueve soluciones dispersas<span class="citation" data-cites="Friedman2008"><sup><a href="#ref-Friedman2008" role="doc-biblioref">10</a></sup></span>. La selección del grado de regularización se realizó con el <strong>criterio EBIC</strong>, que extiende BIC para espacio de grafos de alta dimensión, con parámetro <span class="math inline">\(\gamma\)</span> intermedio (aprox. 0,5) para equilibrar ajuste y parsimonia<span class="citation" data-cites="FoygelDrton2011"><sup><a href="#ref-FoygelDrton2011" role="doc-biblioref">11</a></sup></span>. Los <strong>pesos de arista</strong> se reportan como correlaciones parciales estandarizadas:</p>
+<p><span class="math display">\[
+w_{ij}=-\frac{\widehat\Theta_{ij}}{\sqrt{\widehat\Theta_{ii}\,\widehat\Theta_{jj}}}.
+\]</span></p>
+</section>
+<section id="métricas-globales-y-nodales" class="level2" data-number="3.4">
+<h2 data-number="3.4" class="anchored" data-anchor-id="métricas-globales-y-nodales"><span class="header-section-number">3.4</span> Métricas globales y nodales</h2>
+<p>De cada red se extrajeron métricas <strong>globales</strong> —densidad, diámetro, longitud de camino media y coeficientes de <strong>clustering</strong>— siguiendo la tradición de redes de <strong>pequeño-mundo</strong><span class="citation" data-cites="WattsStrogatz1998"><sup><a href="#ref-WattsStrogatz1998" role="doc-biblioref">12</a></sup></span>, y <strong>modularidad</strong> sobre particiones detectadas por maximización heurística de <span class="math inline">\(Q\)</span><span class="citation" data-cites="Blondel2008"><sup><a href="#ref-Blondel2008" role="doc-biblioref">13</a></sup></span>. A nivel de <strong>nodo</strong> se calcularon:</p>
+<ul>
+<li><strong>Fuerza</strong>: <span class="math inline">\(s_i=\sum_j |w_{ij}|\)</span> (influencia agregada);</li>
+<li><strong>Betweenness</strong>/<strong>closeness</strong> basadas en geodésicas;</li>
+<li><strong>Centralidad de eigenvector</strong> (influencia recursiva);</li>
+<li><strong>PageRank</strong> (vector estacionario de un paseo aleatorio)<span class="citation" data-cites="BrinPage1998"><sup><a href="#ref-BrinPage1998" role="doc-biblioref">14</a></sup></span>.</li>
+</ul>
+<p>La precisión e interpretabilidad de estas métricas en redes psicométricas se discute en guías metodológicas recientes, que se siguieron para la evaluación de estabilidad y reporte responsable<span class="citation" data-cites="EpskampBRM2018 EpskampFried2018"><sup><a href="#ref-EpskampBRM2018" role="doc-biblioref">15</a>,<a href="#ref-EpskampFried2018" role="doc-biblioref">16</a></sup></span>.</p>
+</section>
+<section id="puentes-entre-dominios" class="level2" data-number="3.5">
+<h2 data-number="3.5" class="anchored" data-anchor-id="puentes-entre-dominios"><span class="header-section-number">3.5</span> Puentes entre dominios</h2>
+<p>Con la partición a priori (Uso, Transgresión, Salud, Funcionamiento) se estimó <strong>centralidad puente</strong> (bridge strength) e <strong>influencia puente esperada</strong>, para identificar nodos que conectan comunidades y potenciales puntos de intervención traslacional<span class="citation" data-cites="Jones2019"><sup><a href="#ref-Jones2019" role="doc-biblioref">17</a></sup></span>.</p>
+</section>
+<section id="comparación-con-modelos-nulos" class="level2" data-number="3.6">
+<h2 data-number="3.6" class="anchored" data-anchor-id="comparación-con-modelos-nulos"><span class="header-section-number">3.6</span> Comparación con modelos nulos</h2>
+<p>Para valorar si la organización observada excede lo esperable por azar, cada red se contrastó con distribuciones de referencia simuladas: <strong><span class="math inline">\(G(n,p)\)</span> (Gilbert)</strong> ajustando <span class="math inline">\(p\)</span> a la densidad observada<span class="citation" data-cites="Gilbert1959"><sup><a href="#ref-Gilbert1959" role="doc-biblioref">18</a></sup></span> y <strong>preferential attachment</strong> tipo <strong>Barabási–Albert</strong> con <span class="math inline">\(m\approx \bar k/2\)</span><span class="citation" data-cites="BarabasiAlbert1999"><sup><a href="#ref-BarabasiAlbert1999" role="doc-biblioref">19</a></sup></span>. Sobre métricas clave (clustering, longitud de camino, diámetro, asortatividad, grado máximo, varianza del grado) se obtuvieron medias, bandas de cuantiles y <strong><span class="math inline">\(z\)</span>-scores</strong>: <span class="math display">\[
+z=\frac{T_{\text{obs}}-\mu_0}{\sigma_0}.
+\]</span> Se reportan <em>p</em> bilaterales por simulación.</p>
+</section>
+<section id="invarianza-estructural-entre-etapas" class="level2" data-number="3.7">
+<h2 data-number="3.7" class="anchored" data-anchor-id="invarianza-estructural-entre-etapas"><span class="header-section-number">3.7</span> Invarianza estructural entre etapas</h2>
+<p>Las diferencias entre redes de etapas (p.&nbsp;ej., <strong>Inicio vs 6 m</strong>; <strong>Inicio vs 12 m</strong>) se evaluaron con un <strong>test de permutación</strong> para comparación de redes, que contrasta (i) <strong>invarianza de estructura</strong>, (ii) <strong>aristas específicas</strong> y (iii) <strong>diferencia de fuerza global</strong> <span class="math inline">\(\Delta S=\sum_{i&lt;j}|w_{ij}^{(1)}|-\sum_{i&lt;j}|w_{ij}^{(2)}|\)</span><span class="citation" data-cites="vanBorkulo2023"><sup><a href="#ref-vanBorkulo2023" role="doc-biblioref">20</a></sup></span>. Los <em>p</em>-values se obtienen permutando etiquetas de grupo y re-estimando redes.</p>
+</section>
+<section id="redes-de-cambio-deltas-apareados" class="level2" data-number="3.8">
+<h2 data-number="3.8" class="anchored" data-anchor-id="redes-de-cambio-deltas-apareados"><span class="header-section-number">3.8</span> Redes de cambio (deltas apareados)</h2>
+<p>Para transiciones <strong>Inicio→3 m</strong>, <strong>3→6 m</strong> y <strong>6→12 m</strong>, en submuestras apareadas por individuo, se construyó una matriz de <strong>deltas</strong> <span class="math inline">\(\Delta X=X_{t_2}-X_{t_1}\)</span> y se estimó un GGM regularizado sobre <span class="math inline">\(\Delta X\)</span>. Las aristas positivas indican <strong>co-mejoras / co-empeoramientos</strong>; las negativas sugieren <strong>compensaciones</strong> entre dominios.</p>
+</section>
+<section id="modelos-longitudinales-complementarios" class="level2" data-number="3.9">
+<h2 data-number="3.9" class="anchored" data-anchor-id="modelos-longitudinales-complementarios"><span class="header-section-number">3.9</span> Modelos longitudinales complementarios</h2>
+<p>Con el fin de describir trayectorias y heterogeneidad interindividual, se ajustaron <strong>modelos lineales mixtos</strong> con intercepto (y, cuando fue posible, pendiente) aleatoria por sujeto: <span class="math display">\[
+y_{it}=\beta_0+\beta_1 t+\boldsymbol{\beta}^\top\mathbf{z}_{it}+b_{0i}+b_{1i}t+\varepsilon_{it},
+\]</span> siguiendo el enfoque clásico de efectos aleatorios para datos longitudinales<span class="citation" data-cites="LairdWare1982 Bates2015"><sup><a href="#ref-LairdWare1982" role="doc-biblioref">21</a>,<a href="#ref-Bates2015" role="doc-biblioref">22</a></sup></span>. Como análisis <strong>exploratorio</strong> y no inferencial, se calcularon <strong>correlaciones <em>cross-lagged</em></strong> entre nodos de etapas consecutivas (p.&nbsp;ej., Inicio→6 m), interpretadas con cautela a la luz de las limitaciones del CLPM tradicional<span class="citation" data-cites="Hamaker2015"><sup><a href="#ref-Hamaker2015" role="doc-biblioref">23</a></sup></span>.</p>
+</section>
+<section id="transparencia-y-robustez" class="level2" data-number="3.10">
+<h2 data-number="3.10" class="anchored" data-anchor-id="transparencia-y-robustez"><span class="header-section-number">3.10</span> Transparencia y robustez</h2>
+<p>Para métricas de centralidad agregadas se reportan promedios con <strong>IC 95 %</strong> por aproximación normal (descriptivos). La evaluación de exactitud/estabilidad de redes se guio por buenas prácticas para redes psicológicas (re-muestreo, sensibilidad a regularización y a selección de correlaciones)<span class="citation" data-cites="EpskampBRM2018"><sup><a href="#ref-EpskampBRM2018" role="doc-biblioref">15</a></sup></span>.</p>
 <div class="cell">
 <details class="code-fold">
 <summary>Código</summary>
@@ -260,24 +361,25 @@ div.csl-indent {
 <span id="cb1-47"><a href="#cb1-47" aria-hidden="true" tabindex="-1"></a>  <span class="st">"ggraph"</span>, <span class="st">"tidygraph"</span>, <span class="st">"corrplot"</span>, <span class="st">"patchwork"</span>, <span class="st">"kableExtra"</span>, <span class="st">"plotly"</span></span>
 <span id="cb1-48"><a href="#cb1-48" aria-hidden="true" tabindex="-1"></a>) <span class="sc">|&gt;</span> <span class="fu">unique</span>()</span>
 <span id="cb1-49"><a href="#cb1-49" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb1-50"><a href="#cb1-50" aria-hidden="true" tabindex="-1"></a><span class="co"># 2) Carga de paquetes (instala si faltan) ----</span></span>
-<span id="cb1-51"><a href="#cb1-51" aria-hidden="true" tabindex="-1"></a><span class="fu">ensure_packages</span>(pkgs)</span>
-<span id="cb1-52"><a href="#cb1-52" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb1-53"><a href="#cb1-53" aria-hidden="true" tabindex="-1"></a><span class="co"># 3) Configuración global knitr/figuras ----</span></span>
-<span id="cb1-54"><a href="#cb1-54" aria-hidden="true" tabindex="-1"></a>knitr<span class="sc">::</span>opts_chunk<span class="sc">$</span><span class="fu">set</span>(</span>
-<span id="cb1-55"><a href="#cb1-55" aria-hidden="true" tabindex="-1"></a>  <span class="at">message   =</span> <span class="cn">FALSE</span>,</span>
-<span id="cb1-56"><a href="#cb1-56" aria-hidden="true" tabindex="-1"></a>  <span class="at">warning   =</span> <span class="cn">FALSE</span>,</span>
-<span id="cb1-57"><a href="#cb1-57" aria-hidden="true" tabindex="-1"></a>  <span class="at">fig.align =</span> <span class="st">"center"</span>,</span>
-<span id="cb1-58"><a href="#cb1-58" aria-hidden="true" tabindex="-1"></a>  <span class="at">fig.width =</span> <span class="dv">10</span>,</span>
-<span id="cb1-59"><a href="#cb1-59" aria-hidden="true" tabindex="-1"></a>  <span class="at">fig.height =</span> <span class="dv">8</span>,</span>
-<span id="cb1-60"><a href="#cb1-60" aria-hidden="true" tabindex="-1"></a>  <span class="at">dpi =</span> <span class="dv">300</span></span>
-<span id="cb1-61"><a href="#cb1-61" aria-hidden="true" tabindex="-1"></a>)</span>
-<span id="cb1-62"><a href="#cb1-62" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb1-63"><a href="#cb1-63" aria-hidden="true" tabindex="-1"></a><span class="co"># 4) Temas y opciones de visualización ----</span></span>
-<span id="cb1-64"><a href="#cb1-64" aria-hidden="true" tabindex="-1"></a><span class="fu">theme_set</span>(ggplot2<span class="sc">::</span><span class="fu">theme_minimal</span>(<span class="at">base_size =</span> <span class="dv">12</span>))</span>
-<span id="cb1-65"><a href="#cb1-65" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb1-66"><a href="#cb1-66" aria-hidden="true" tabindex="-1"></a><span class="co"># 5) Semilla global para reproducibilidad ----</span></span>
-<span id="cb1-67"><a href="#cb1-67" aria-hidden="true" tabindex="-1"></a><span class="fu">set.seed</span>(<span class="dv">2024</span>)</span></code><button title="Copiar al portapapeles" class="code-copy-button"><i class="bi"></i></button></pre></div>
+<span id="cb1-50"><a href="#cb1-50" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-51"><a href="#cb1-51" aria-hidden="true" tabindex="-1"></a><span class="co"># 2) Carga de paquetes (instala si faltan) ----</span></span>
+<span id="cb1-52"><a href="#cb1-52" aria-hidden="true" tabindex="-1"></a><span class="fu">ensure_packages</span>(pkgs)</span>
+<span id="cb1-53"><a href="#cb1-53" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-54"><a href="#cb1-54" aria-hidden="true" tabindex="-1"></a><span class="co"># 3) Configuración global knitr/figuras ----</span></span>
+<span id="cb1-55"><a href="#cb1-55" aria-hidden="true" tabindex="-1"></a>knitr<span class="sc">::</span>opts_chunk<span class="sc">$</span><span class="fu">set</span>(</span>
+<span id="cb1-56"><a href="#cb1-56" aria-hidden="true" tabindex="-1"></a>  <span class="at">message   =</span> <span class="cn">FALSE</span>,</span>
+<span id="cb1-57"><a href="#cb1-57" aria-hidden="true" tabindex="-1"></a>  <span class="at">warning   =</span> <span class="cn">FALSE</span>,</span>
+<span id="cb1-58"><a href="#cb1-58" aria-hidden="true" tabindex="-1"></a>  <span class="at">fig.align =</span> <span class="st">"center"</span>,</span>
+<span id="cb1-59"><a href="#cb1-59" aria-hidden="true" tabindex="-1"></a>  <span class="at">fig.width =</span> <span class="dv">10</span>,</span>
+<span id="cb1-60"><a href="#cb1-60" aria-hidden="true" tabindex="-1"></a>  <span class="at">fig.height =</span> <span class="dv">8</span>,</span>
+<span id="cb1-61"><a href="#cb1-61" aria-hidden="true" tabindex="-1"></a>  <span class="at">dpi =</span> <span class="dv">300</span></span>
+<span id="cb1-62"><a href="#cb1-62" aria-hidden="true" tabindex="-1"></a>)</span>
+<span id="cb1-63"><a href="#cb1-63" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-64"><a href="#cb1-64" aria-hidden="true" tabindex="-1"></a><span class="co"># 4) Temas y opciones de visualización ----</span></span>
+<span id="cb1-65"><a href="#cb1-65" aria-hidden="true" tabindex="-1"></a><span class="fu">theme_set</span>(ggplot2<span class="sc">::</span><span class="fu">theme_minimal</span>(<span class="at">base_size =</span> <span class="dv">12</span>))</span>
+<span id="cb1-66"><a href="#cb1-66" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-67"><a href="#cb1-67" aria-hidden="true" tabindex="-1"></a><span class="co"># 5) Semilla global para reproducibilidad ----</span></span>
+<span id="cb1-68"><a href="#cb1-68" aria-hidden="true" tabindex="-1"></a><span class="fu">set.seed</span>(<span class="dv">2024</span>)</span></code><button title="Copiar al portapapeles" class="code-copy-button"><i class="bi"></i></button></pre></div>
 </details>
 </div>
 <div class="cell" data-layout-align="center">
@@ -1876,8 +1978,8 @@ div.csl-indent {
 </div>
 </div>
 </section>
-<section id="comparación-con-modelos-nulos" class="level2" data-number="4.4">
-<h2 data-number="4.4" class="anchored" data-anchor-id="comparación-con-modelos-nulos"><span class="header-section-number">4.4</span> Comparación con Modelos Nulos</h2>
+<section id="comparación-con-modelos-nulos-1" class="level2" data-number="4.4">
+<h2 data-number="4.4" class="anchored" data-anchor-id="comparación-con-modelos-nulos-1"><span class="header-section-number">4.4</span> Comparación con Modelos Nulos</h2>
 <div class="cell" data-layout-align="center">
 <details class="code-fold">
 <summary>Código</summary>
@@ -3629,6 +3731,57 @@ div.csl-indent {
 </div>
 <div id="ref-Rojas2002" class="csl-entry" role="listitem">
 6. Rojas, G., Gaete, M., Guajardo, M., Martínez, M., Martínez, M., Fritsch, R., &amp; Araya, R. (2002). Prevalencia de trastornos psiquiátricos en pacientes hospitalizados en un hospital general. <em>Revista M<span>é</span>dica de Chile</em>, <em>130</em>(6), 689-696. <a href="https://doi.org/10.4067/S0034-98872002000600008">https://doi.org/10.4067/S0034-98872002000600008</a>
+</div>
+<div id="ref-CastilloCarniglia2015" class="csl-entry" role="listitem">
+7. Castillo-Carniglia, A., Marín, J. D., Soto-Brandt, G., Donoso, M. P., Piñol, D., San Martín, J., Huepe, D., Alvarado, R., Eastwood, B., &amp; Portilla Huidobro, R. (2015). Adaptation and Validation of the Instrument Treatment Outcomes Profile to the Chilean Population. <em>Journal of Substance Abuse Treatment</em>, <em>56</em>, 39-47. <a href="https://doi.org/10.1016/j.jsat.2015.03.002">https://doi.org/10.1016/j.jsat.2015.03.002</a>
+</div>
+<div id="ref-Spiller2020" class="csl-entry" role="listitem">
+8. Spiller, T. R., Levi, O., Neria, Y., Suarez-Jimenez, B., Bar-Haim, Y., &amp; Lazarov, A. (2020). On the validity of the centrality hypothesis in cross-sectional between-subject networks of psychopathology. <em>BMC Medicine</em>, <em>18</em>(1), 297. <a href="https://doi.org/10.1186/s12916-020-01740-5">https://doi.org/10.1186/s12916-020-01740-5</a>
+</div>
+<div id="ref-Liu2012" class="csl-entry" role="listitem">
+9. Liu, H., Han, F., Yuan, M., Lafferty, J., &amp; Wasserman, L. (2012). High-dimensional semiparametric Gaussian copula graphical models. <em>The Annals of Statistics</em>, <em>40</em>(4), 2293-2326. <a href="https://doi.org/10.1214/12-AOS1037">https://doi.org/10.1214/12-AOS1037</a>
+</div>
+<div id="ref-Friedman2008" class="csl-entry" role="listitem">
+10. Friedman, J., Hastie, T., &amp; Tibshirani, R. (2008). Sparse Inverse Covariance Estimation with the Graphical Lasso. <em>Biostatistics</em>, <em>9</em>(3), 432-441. <a href="https://doi.org/10.1093/biostatistics/kxm045">https://doi.org/10.1093/biostatistics/kxm045</a>
+</div>
+<div id="ref-FoygelDrton2011" class="csl-entry" role="listitem">
+11. Foygel, R., &amp; Drton, M. (2011). Extended <span>B</span>ayesian Information Criteria for Gaussian Graphical Models. <em>The Annals of Applied Statistics</em>, <em>5</em>(2A), 1100-1128. <a href="https://doi.org/10.1214/10-AOAS799">https://doi.org/10.1214/10-AOAS799</a>
+</div>
+<div id="ref-WattsStrogatz1998" class="csl-entry" role="listitem">
+12. Watts, D. J., &amp; Strogatz, S. H. (1998). Collective dynamics of ’small-world’ networks. <em>Nature</em>, <em>393</em>(6684), 440-442. <a href="https://doi.org/10.1038/30918">https://doi.org/10.1038/30918</a>
+</div>
+<div id="ref-Blondel2008" class="csl-entry" role="listitem">
+13. Blondel, V. D., Guillaume, J.-L., Lambiotte, R., &amp; Lefebvre, E. (2008). Fast unfolding of communities in large networks. <em>Journal of Statistical Mechanics: Theory and Experiment</em>, <em>2008</em>(10), P10008. <a href="https://doi.org/10.1088/1742-5468/2008/10/P10008">https://doi.org/10.1088/1742-5468/2008/10/P10008</a>
+</div>
+<div id="ref-BrinPage1998" class="csl-entry" role="listitem">
+14. Brin, S., &amp; Page, L. (1998). The anatomy of a large-scale hypertextual Web search engine. <em>Computer Networks and ISDN Systems</em>, <em>30</em>(1–7), 107-117. <a href="https://doi.org/10.1016/S0169-7552(98)00110-X">https://doi.org/10.1016/S0169-7552(98)00110-X</a>
+</div>
+<div id="ref-EpskampBRM2018" class="csl-entry" role="listitem">
+15. Epskamp, S., Borsboom, D., &amp; Fried, E. I. (2018). Estimating psychological networks and their accuracy: A tutorial paper. <em>Behavior Research Methods</em>, <em>50</em>(1), 195-212. <a href="https://doi.org/10.3758/s13428-017-0862-1">https://doi.org/10.3758/s13428-017-0862-1</a>
+</div>
+<div id="ref-EpskampFried2018" class="csl-entry" role="listitem">
+16. Epskamp, S., &amp; Fried, E. I. (2018). A tutorial on regularized partial correlation networks. <em>Psychological Methods</em>, <em>23</em>(4), 617-634. <a href="https://doi.org/10.1037/met0000167">https://doi.org/10.1037/met0000167</a>
+</div>
+<div id="ref-Jones2019" class="csl-entry" role="listitem">
+17. Jones, P. J., Ma, R., &amp; McNally, R. J. (2019). Bridge Centrality: A Network Approach to Understanding Comorbidity. <em>Multivariate Behavioral Research</em>, <em>56</em>(2), 353-367. <a href="https://doi.org/10.1080/00273171.2019.1614898">https://doi.org/10.1080/00273171.2019.1614898</a>
+</div>
+<div id="ref-Gilbert1959" class="csl-entry" role="listitem">
+18. Gilbert, E. N. (1959). Random Graphs. <em>The Annals of Mathematical Statistics</em>, <em>30</em>(4), 1141-1144. <a href="https://doi.org/10.1214/aoms/1177706098">https://doi.org/10.1214/aoms/1177706098</a>
+</div>
+<div id="ref-BarabasiAlbert1999" class="csl-entry" role="listitem">
+19. Barabási, A.-L., &amp; Albert, R. (1999). Emergence of Scaling in Random Networks. <em>Science</em>, <em>286</em>(5439), 509-512. <a href="https://doi.org/10.1126/science.286.5439.509">https://doi.org/10.1126/science.286.5439.509</a>
+</div>
+<div id="ref-vanBorkulo2023" class="csl-entry" role="listitem">
+20. Borkulo, C. D. van, Bork, R. van, Boschloo, L., Kossakowski, J. J., Tio, P., Schoevers, R. A., Borsboom, D., &amp; Waldorp, L. J. (2023). Comparing network structures on three aspects: A permutation test. <em>Psychological Methods</em>, <em>28</em>(6), 1273-1285. <a href="https://doi.org/10.1037/met0000476">https://doi.org/10.1037/met0000476</a>
+</div>
+<div id="ref-LairdWare1982" class="csl-entry" role="listitem">
+21. Laird, N. M., &amp; Ware, J. H. (1982). Random-Effects Models for Longitudinal Data. <em>Biometrics</em>, <em>38</em>(4), 963-974. <a href="https://doi.org/10.2307/2529876">https://doi.org/10.2307/2529876</a>
+</div>
+<div id="ref-Bates2015" class="csl-entry" role="listitem">
+22. Bates, D., Mächler, M., Bolker, B., &amp; Walker, S. (2015). Fitting Linear Mixed-Effects Models Using <code>lme4</code>. <em>Journal of Statistical Software</em>, <em>67</em>(1), 1-48. <a href="https://doi.org/10.18637/jss.v067.i01">https://doi.org/10.18637/jss.v067.i01</a>
+</div>
+<div id="ref-Hamaker2015" class="csl-entry" role="listitem">
+23. Hamaker, E. L., Kuiper, R. M., &amp; Grasman, R. P. P. P. (2015). A Critique of the Cross-Lagged Panel Model. <em>Psychological Methods</em>, <em>20</em>(1), 102-116. <a href="https://doi.org/10.1037/a0038889">https://doi.org/10.1037/a0038889</a>
 </div>
 </div></section></div></main>
 <!-- /main column -->
