@@ -1,0 +1,2336 @@
+---
+title: "Análisis Comparativo de Redes de Policonsumo"
+subtitle: "Red de Co-ocurrencia vs Red Bipartita"
+author:
+  - name: "Amaru Simón Agüero Jiménez"
+    email: "aaguero@miaundes.cl"
+    orcid: "0000-0001-7336-1833"
+date: "`r Sys.Date()`"
+lang: es
+format:
+  html:
+    smooth-scroll: true
+    toc: true
+    toc-depth: 6
+    toc-location: right
+    number-sections: true
+    number-depth: 6
+    code-fold: true
+    bibliography: ref.bib
+    csl: apa-numeric-superscript.csl
+    fig-cap-location: bottom
+#    css: styles.css
+execute:
+  python: true
+  warning: false
+  message: false
+  fig-width: 8
+  fig-height: 6
+---
+
+# Introducción 
+
+Los trastornos por uso de sustancias (TUS) constituyen una de las principales causas de carga de enfermedad y mortalidad evitable a escala global. En 2016 se calculó que más de 100 millones de personas sufrían trastorno por consumo de alcohol y decenas de millones presentaban dependencia de opioides, cannabis o cocaína [@Volkow2023]. La frecuente comorbilidad psiquiátrica, depresión, trastornos de ansiedad, psicosis o trastornos de personalidad multiplica la severidad clínica y los costes sociosanitarios [@Connery2020]. Estudios hospitalarios europeos y norteamericanos muestran que alrededor del 20 % de las admisiones psiquiátricas corresponden a pacientes de sexo femenino con diagnóstico dual, fenómeno que favorece re-ingresos y estancias prolongadas[@GomezSanchezLafuente2022].
+
+En Chile, las encuestas nacionales sitúan la prevalencia de abuso o dependencia de sustancias entre el 11 % y el 20 %, una de las más elevadas de Latinoamérica. Los registros hospitalarios concuerdan con las cifras internacionales: alrededor de una quinta parte de los internados en psiquiatría presenta un TCS como diagnóstico primario o secundario. Esta convergencia evidencia que la hospitalización psiquiátrica es un desenlace clínico crítico en la trayectoria de las adicciones, razón por la cual identificar sus factores determinantes resulta esencial para planificar intervenciones preventivas, asignar recursos y reducir la carga asistencial [@Connery2020; @Saxena2011; @GomezSanchezLafuente2016; @Rojas2002].
+
+# Objetivos e Hipótesis
+
+Este análisis examina las redes psicométricas del Treatment Outcome Profile (TOP) en contexto longitudinal, evaluando la evolución de las relaciones entre consumo de sustancias, salud, inclusión social y riesgo durante el tratamiento de rehabilitación.
+
+## Hipótesis de Investigación
+
+**H1**: La densidad de la red (fuerza global) disminuye significativamente entre el ingreso y los 6-12 meses de tratamiento, reflejando una desacoplación de síntomas.
+
+**H2**: Las variables de salud (psicológica/física) aumentan su centralidad de puente entre dominios al avanzar el tratamiento.
+
+**H3**: Los cambios en consumo de sustancias entre etapas predicen cambios en salud y calidad de vida (análisis de transiciones).
+
+**H4**: Existen trayectorias heterogéneas de cambio identificables mediante modelos mixtos lineales.
+
+
+# Metodología
+
+## Descripción de los datos
+
+Este es un estudio de cohorte retrospectiva de pacientes adultos en tratamiento por consumo de sustancias, con datos otorgados por el Servicio Nacional para la Prevención y Rehabilitación del Consumo de Drogas y Alcohol de Chile (SENDA) en convenio con el núcleo milenio de ánalisis de políticas públicas de drogas (nDP). La cohorte se construyó vinculando los registros administrativos de los pacientes (n = 223,061 episodios de tratamiento entre 97,698 personas en las 16 regiones del país).
+
+Estos datos incluyen múltiples variables relacionadas al consumo y tratamiento rehabilitador de drogas. Entre estas variables esta la *sustancia principal*  por la cual se trató al paciente y sustancias secundarias (alcohol, pasta base de cocaína, cocaína, marihuana, depresores del SNC u otras sustancias. Tambien está presente el número de reingresos a tratamiento (retratamientos, categorizados en 0, 1, 2, 3 o más reingresos), el *tipo de plan de tratamiento* (ambulatorio vs. residencial) y el historial clínico de salud mental de los pacientes.
+
+El registro de pacientes en tratamiento se realizó en una plataforma electrónica denominada SISTRAT, que contenía información sociodemográfica, datos sobre el estado de salud y patrones de consumo de sustancias, entre otras variables, además de información sobre el propio tratamiento (p. ej., fecha de ingreso, egreso, tipo de tratamiento). Las base de datos se vincularon de forma determinista mediante un hash de 64 caracteres resultante del cifrado (con un algoritmo SHA-256) del número de identificación único de cada persona.
+
+```{r}
+# =====================================================
+# TOP 2015–2022: Carga robusta + Limpieza + Renombrado
+# Setup unificado (paquetes + opciones + tema + seed)
+# =====================================================
+
+# 0) Función robusta para instalar/cargar paquetes ----
+ensure_packages <- function(pkgs, repos = getOption("repos")) {
+  stopifnot(is.character(pkgs), length(pkgs) > 0)
+
+  # Repos por defecto si no están definidos
+  if (is.null(repos) || is.na(repos["CRAN"]) || repos["CRAN"] == "@CRAN@") {
+    options(repos = c(CRAN = "https://cloud.r-project.org"))
+  }
+
+  # Detectar faltantes
+  missing_pkgs <- pkgs[!vapply(pkgs, requireNamespace, logical(1), quietly = TRUE)]
+
+  # Instalar faltantes (con dependencias y en paralelo cuando sea posible)
+  if (length(missing_pkgs)) {
+    ncpus <- 1L
+    if (requireNamespace("parallel", quietly = TRUE)) {
+      ncpus <- max(1L, parallel::detectCores() - 1L)
+    }
+    install.packages(missing_pkgs, dependencies = TRUE, Ncpus = ncpus)
+  }
+
+  # Cargar todos (incluye los que ya estaban)
+  invisible(lapply(pkgs, function(p) {
+    suppressPackageStartupMessages(
+      library(p, character.only = TRUE)
+    )
+  }))
+
+  invisible(TRUE)
+}
+
+# 1) Declaración única de paquetes ----
+pkgs <- c(
+  # utilidades / data wrangling
+  "data.table", "stringr", "stringi", "janitor", "lubridate",
+  "dplyr", "purrr", "tibble", "openxlsx", "tidyverse",
+  # redes y psicometría
+  "igraph", "qgraph", "bootnet", "NetworkComparisonTest", "networktools",
+  # modelos mixtos
+  "lme4", "lmerTest", "broom.mixed",
+  # grafos/visualización
+  "ggraph", "tidygraph", "corrplot", "patchwork", "kableExtra", "plotly"
+) |> unique()
+
+# 2) Carga de paquetes (instala si faltan) ----
+ensure_packages(pkgs)
+
+# 3) Configuración global knitr/figuras ----
+knitr::opts_chunk$set(
+  message   = FALSE,
+  warning   = FALSE,
+  fig.align = "center",
+  fig.width = 10,
+  fig.height = 8,
+  dpi = 300
+)
+
+# 4) Temas y opciones de visualización ----
+theme_set(ggplot2::theme_minimal(base_size = 12))
+
+# 5) Semilla global para reproducibilidad ----
+set.seed(2024)
+```
+
+```{r}
+# 1) Paths y configuración ----------------------------------------------
+root <- normalizePath(gsub("/docs$", "", getwd()), mustWork = FALSE)
+base_path <- file.path(root, "data", "TOP")
+output_rds <- file.path(root, "data", "TOP_CLEAN_2015_2022_FINAL.rds")
+output_excel <- file.path(root, "data", "TOP_CLEAN_2015_2022_FINAL.xlsx")
+
+# 2) Archivos esperados --------------------------------------------------
+archivos <- c(
+  "2015_oct_dup_enc.csv",
+  "2016_oct_dup1_enc.csv", "2016_oct_dup2_enc.csv",
+  "2017_oct_dup1_enc.csv", "2017_oct_dup2_enc.csv",
+  "2018_oct_dup1_enc.csv", "2018_oct_dup2_enc.csv",
+  "2019_oct_dup1_enc.csv", "2019_oct_dup2_enc.csv",
+  "2019oct_oct_dup_enc.csv",
+  "2020_oct_dup1_enc.csv", "2020_oct_dup2_enc.csv",
+  "2021_oct_dup1_enc.csv", "2021_oct_dup2_enc.csv",
+  "2022_oct_dup1_enc.csv", "2022_oct_dup2_enc.csv"
+)
+
+# 3) Funciones de utilidad -----------------------------------------------
+
+# Extrae año del nombre del archivo
+extract_year <- function(filename) {
+  as.integer(stringr::str_extract(filename, "^20\\d{2}"))
+}
+
+# Limpia nombres de columnas
+clean_colnames <- function(nms) {
+  nms <- stringi::stri_trans_general(nms, "Latin-ASCII")
+  nms <- stringr::str_replace_all(nms, "[^A-Za-z0-9]+", "_")
+  nms <- stringr::str_replace_all(nms, "_{2,}", "_")
+  nms <- stringr::str_replace_all(nms, "^_|_$", "")
+  janitor::make_clean_names(nms)
+}
+
+# Mojibake safe (no explota con NA)
+fix_mojibake <- function(x) {
+  if (!is.character(x)) return(x)
+  x <- enc2utf8(x)
+  bad <- !is.na(x) & stringr::str_detect(x, "(Ã.|Â|Aƒ)")
+  if (any(bad)) {
+    cand <- iconv(x[bad], from = "latin1", to = "UTF-8")
+    scount <- function(v, pat) { 
+      out <- stringr::str_count(v, pat)
+      out[is.na(out)] <- 0L
+      out 
+    }
+    keep <- ifelse(
+      scount(cand, "Ã|Â|Aƒ") < scount(x[bad], "Ã|Â|Aƒ"), 
+      cand, 
+      x[bad]
+    )
+    x[bad] <- keep
+  }
+  x
+}
+
+# Parser de fechas mixtas
+parse_mixed_dates <- function(x) {
+  x <- as.character(x)
+  x <- stringr::str_trim(x)
+  x[x %in% c("", "NA", "N/A", "NULL", "0000-00-00", "00/00/0000")] <- NA_character_
+  x <- stringr::str_replace_all(x, "[./]", "-")
+  res <- rep(as.Date(NA), length(x))
+  
+  # yyyy-mm-dd
+  ymd_mask <- !is.na(x) & stringr::str_detect(x, "^[12][0-9]{3}-[0-9]{1,2}-[0-9]{1,2}$")
+  if (any(ymd_mask)) res[ymd_mask] <- suppressWarnings(lubridate::ymd(x[ymd_mask]))
+  
+  # dd-mm-yyyy (preferencia Chile)
+  dmy_mask <- !is.na(x) & !ymd_mask & 
+    stringr::str_detect(x, "^[0-9]{1,2}-[0-9]{1,2}-[12][0-9]{3}$")
+  if (any(dmy_mask)) res[dmy_mask] <- suppressWarnings(lubridate::dmy(x[dmy_mask]))
+  
+  # mdy como fallback
+  mdy_mask <- is.na(res) & !is.na(x) & 
+    stringr::str_detect(x, "^[0-9]{1,2}-[0-9]{1,2}-[12][0-9]{3}$")
+  if (any(mdy_mask)) res[mdy_mask] <- suppressWarnings(lubridate::mdy(x[mdy_mask]))
+  
+  # YYYYMMDD
+  yfirst8_mask <- !is.na(x) & stringr::str_detect(x, "^(19|20)\\d{6}$")
+  if (any(yfirst8_mask)) res[yfirst8_mask] <- suppressWarnings(lubridate::ymd(x[yfirst8_mask]))
+  
+  # DDMMAAAA
+  dmy8_mask <- !is.na(x) & stringr::str_detect(x, "^\\d{8}$") & !yfirst8_mask
+  if (any(dmy8_mask)) res[dmy8_mask] <- suppressWarnings(lubridate::dmy(x[dmy8_mask]))
+  
+  # Fechas Excel
+  excel_mask <- !is.na(x) & stringr::str_detect(x, "^[0-9]{5,6}$")
+  if (any(excel_mask)) {
+    idx <- which(excel_mask)
+    num <- suppressWarnings(as.numeric(x[idx]))
+    ok <- !is.na(num) & num > 20000 & num < 60000
+    if (any(ok)) res[idx[ok]] <- as.Date(num[ok], origin = "1899-12-30")
+  }
+  
+  # Último recurso
+  fallback_mask <- is.na(res) & !is.na(x)
+  if (any(fallback_mask)) {
+    tmp <- suppressWarnings(lubridate::parse_date_time(
+      x[fallback_mask],
+      orders = c("Ymd","Y-m-d","dmY","d-m-Y","mdY","m-d-Y","Ymd HMS","dmY HMS","mdY HMS")
+    ))
+    res[fallback_mask] <- as.Date(tmp)
+  }
+  res
+}
+
+# Detecta columnas de fecha por nombre
+normalize_name <- function(n) {
+  n %>% 
+    stringi::stri_trans_general("Latin-ASCII") %>%
+    tolower() %>% 
+    stringr::str_replace_all("[^a-z0-9]+", "")
+}
+
+is_date_like <- function(n) {
+  n_norm <- normalize_name(n)
+  any(stringr::str_detect(
+    n_norm,
+    c("^fecha","fechanacimiento","fechadeingreso","fechaingreso",
+      "fechaegreso","fechaalta","fecharegistro","fechaconsulta",
+      "fechacita","fechadiagnostico")
+  ))
+}
+
+# Lector robusto de archivos
+read_top_file <- function(filename) {
+  file_path <- file.path(base_path, filename)
+  if (!file.exists(file_path)) return(NULL)
+  
+  dt <- tryCatch(
+    suppressWarnings(
+      data.table::fread(
+        file_path,
+        sep = ";",
+        encoding = "Latin-1",
+        na.strings = c("", "NA", "N/A", "NULL"),
+        showProgress = FALSE,
+        colClasses = "character"
+      )
+    ),
+    error = function(e) NULL
+  )
+  
+  if (is.null(dt)) return(NULL)
+  
+  data.table::setDT(dt)
+  if ("HASHKEY" %in% names(dt)) dt[, HASHKEY := as.character(HASHKEY)]
+  data.table::setnames(dt, clean_colnames(names(dt)))
+  dt[, year := extract_year(filename)]
+  dt[, source_file := filename]
+  dt[]
+}
+
+# Renombrado dinámico de columnas de dosis
+rename_dosis_cols <- function(dt) {
+  nms <- names(dt)
+  dose_mask <- startsWith(nms, "d_af_a_sis_")
+  if (!any(dose_mask)) return(invisible(NULL))
+  
+  sufijos <- sub("^d_af_a_sis_", "", nms[dose_mask])
+  sub_map <- c(
+    "oh" = "alcohol",
+    "thc" = "cannabis",
+    "pbc" = "pasta_base",
+    "coc" = "cocaina",
+    "bzd" = "benzodiacepinas",
+    "otra" = "otra_sustancia"
+  )
+  suf_ok <- ifelse(sufijos %in% names(sub_map), sub_map[sufijos], sufijos)
+  nuevos <- paste0("dosis_", suf_ok)
+  data.table::setnames(dt, nms[dose_mask], nuevos)
+  invisible(NULL)
+}
+
+# ============================
+# Funciones de limpieza de texto
+# ============================
+
+# Helper: forzar a character cuando venga factor
+.as_char <- function(x) {
+  if (is.character(x)) return(x)
+  if (is.factor(x))    return(as.character(x))
+  x
+}
+
+# Detecta "mojibake" típico
+.has_mojibake <- function(x) {
+  x <- .as_char(x)
+  any(grepl("(Ã|Â|â|�)", x), na.rm = TRUE)
+}
+
+# Normaliza texto: espacios invisibles, comillas/guiones, trim
+normalize_text <- function(x) {
+  x <- .as_char(x)
+  if (!is.character(x)) return(x)
+  x <- gsub("\u00A0", " ", x, fixed = TRUE)                 # NBSP
+  x <- gsub("[\u200B\u200C\u200D\uFEFF]", "", x)            # zero-width
+  x <- gsub("[\u201C\u201D]", "\"", x)                      # " "
+  x <- gsub("\u2019", "'", x)                               # '
+  x <- gsub("[\u2013\u2014]", "-", x)                       # – —
+  x <- gsub('""', '"', x, fixed = TRUE)
+  x <- gsub(" +", " ", x)
+  trimws(x)
+}
+
+# Fallback de reemplazos comunes de mojibake
+# Fallback de reemplazos comunes de mojibake (incluye variantes con "f"/"ƒ")
+.fix_mojibake_pairs <- function(x) {
+  x <- .as_char(x)
+  if (!is.character(x)) return(x)
+
+  # Variantes básicas (una sola pasada UTF-8 interpretada como latin1)
+  basics_from <- c("Ã¡","Ã©","Ã­","Ã³","Ãº","Ãñ","ÃÑ","Ãœ","Ã¼","Ã‰","Ã“","Ãš","Ã","Ã")
+  basics_to   <- c("á","é","í","ó","ú","ñ","Ñ","Ü","ü","É","Ó","Ú","Á","Í")
+  for (i in seq_along(basics_from)) x <- gsub(basics_from[i], basics_to[i], x, fixed = TRUE)
+
+  # Doble codificación muy común (ÃƒÂ*)
+  dbl_from <- c("ÃƒÂ¡","ÃƒÂ©","ÃƒÂ­","ÃƒÂ³","ÃƒÂº","ÃƒÂ±","Ãƒâ€˜","ÃƒÂœ","ÃƒÂº","ÃƒÂ"
+               )
+  dbl_to   <- c("á","é","í","ó","ú","ñ","Ñ","Ü","ú","Ã") # "ÃƒÂ" suelto → "Ã" (luego cae en basics)
+  for (i in seq_along(dbl_from)) x <- gsub(dbl_from[i], dbl_to[i], x, fixed = TRUE)
+
+  # Misma doble codificación vista como "ÃfÂ*" (cuando ƒ se ve como f)
+  # Usamos regex para cubrir "f" o "ƒ"
+  x <- gsub("Ã[fƒ]Â¡", "á", x, perl = TRUE)
+  x <- gsub("Ã[fƒ]Â©", "é", x, perl = TRUE)
+  x <- gsub("Ã[fƒ]Â­", "í", x, perl = TRUE)
+  x <- gsub("Ã[fƒ]Â³", "ó", x, perl = TRUE)
+  x <- gsub("Ã[fƒ]Âº", "ú", x, perl = TRUE)
+  x <- gsub("Ã[fƒ]Â±", "ñ", x, perl = TRUE)
+  x <- gsub("Ã[fƒ]â€˜", "Ñ", x, perl = TRUE)
+
+  # Otros restos comunes
+  x <- gsub("Ã‚Âº","º", x, fixed = TRUE)
+  x <- gsub("Ã‚Âª","ª", x, fixed = TRUE)
+  x <- gsub("Ã‚Â°","°", x, fixed = TRUE)
+  x <- gsub("Ã‚","",  x, fixed = TRUE)     # Â sobrante
+
+  # Comillas/guiones mojibake de cp1252 → UTF-8 mal decodificado
+  x <- gsub("Ã¢â‚¬â€œ", "–", x, fixed = TRUE)
+  x <- gsub("Ã¢â‚¬â€", "—", x, fixed = TRUE)
+  x <- gsub("Ã¢â‚¬Ëœ", "‘", x, fixed = TRUE)
+  x <- gsub("Ã¢â‚¬â„¢", "’", x, fixed = TRUE)
+  x <- gsub("Ã¢â‚¬Å“", "“", x, fixed = TRUE)
+  x <- gsub("Ã¢â‚¬Â", "”", x, fixed = TRUE)
+
+  x
+}
+
+# Reparador principal de mojibake
+.repair_mojibake_vec <- function(x) {
+  x <- .as_char(x)
+  if (!is.character(x)) return(x)
+  
+  safe_iconv <- function(z, from, to) {
+    suppressWarnings(iconv(z, from = from, to = to, sub = NA))
+  }
+
+  cand <- list(
+    raw            = x,
+    enc2utf8       = enc2utf8(x),
+    latin1_to_utf8 = safe_iconv(x, "latin1",  "UTF-8"),
+    cp1252_to_utf8 = safe_iconv(x, "CP1252",  "UTF-8"),
+    rt_latin1      = safe_iconv(safe_iconv(x, "UTF-8", "latin1"),  "latin1",  "UTF-8"),
+    rt_cp1252      = safe_iconv(safe_iconv(x, "UTF-8", "CP1252"),  "CP1252",  "UTF-8")
+  )
+
+  # Elige el candidato con menos rastros
+  score <- function(v) {
+    v2 <- v
+    v2[is.na(v2)] <- x[is.na(v2)]
+    sum(grepl("Ã|Â|â|�", v2))
+  }
+  scores <- sapply(cand, score)
+  out <- cand[[names(which.min(scores))[1]]]
+  out[is.na(out)] <- x[is.na(out)]
+  out <- gsub("\uFEFF", "", out, fixed=TRUE)
+  out <- gsub("\u00A0", " ", out, fixed=TRUE)
+
+  # Aplica fallback explícito
+  out <- .fix_mojibake_pairs(out)
+  out <- .fix_mojibake_pairs(out)  # Segunda pasada
+
+  out
+}
+
+# Detecta si columna es mayormente numérica
+is_mostly_numeric <- function(x, threshold = 0.90) {
+  if (!is.character(x)) return(FALSE)
+  y <- normalize_text(x)
+  y <- gsub(",", ".", y, fixed = TRUE)
+  y <- trimws(y)
+  y <- y[!is.na(y) & y != ""]
+  if (!length(y)) return(FALSE)
+  ok <- grepl("^[-+]?\\d*(?:\\.\\d+)?$", y)
+  mean(ok) >= threshold
+}
+
+# Conversión segura a numérico
+to_numeric_safely <- function(x) {
+  stopifnot(is.character(x))
+  y <- normalize_text(x)
+  y <- gsub(",", ".", y, fixed = TRUE)
+  y[y %in% c("", "NA", "NaN", "null", "NULL")] <- NA_character_
+  suppressWarnings(as.numeric(y))
+}
+
+# Función principal de casteo
+clean_cast_dataset <- function(df, id_cols = "HASHKEY", numeric_threshold = 0.90, verbose = TRUE) {
+  if (!is.data.frame(df)) stop("df debe ser un data.frame/tibble.")
+  out <- df
+  
+  id_cols <- intersect(id_cols, names(out))
+  
+  # Limpiar columnas character excepto IDs
+  char_cols <- names(out)[vapply(out, is.character, logical(1))]
+  char_cols_to_clean <- setdiff(char_cols, id_cols)
+  
+  if (length(char_cols_to_clean)) {
+    for (nm in char_cols_to_clean) {
+      out[[nm]] <- normalize_text(.repair_mojibake_vec(out[[nm]]))
+    }
+  }
+  
+  # Castear a numeric si corresponde
+  converted_to_numeric <- character(0)
+  for (nm in setdiff(names(out), id_cols)) {
+    if (is.character(out[[nm]]) && is_mostly_numeric(out[[nm]], numeric_threshold)) {
+      out[[nm]] <- to_numeric_safely(out[[nm]])
+      converted_to_numeric <- c(converted_to_numeric, nm)
+    }
+  }
+  
+  # Castear resto a factor
+  converted_to_factor <- character(0)
+  for (nm in setdiff(names(out), id_cols)) {
+    if (is.character(out[[nm]])) {
+      out[[nm]] <- factor(normalize_text(out[[nm]]))
+      converted_to_factor <- c(converted_to_factor, nm)
+    }
+  }
+  
+  # Mantener IDs como character
+  for (nm in id_cols) {
+    if (!is.character(out[[nm]])) {
+      out[[nm]] <- as.character(df[[nm]])
+    }
+  }
+  
+  out
+}
+
+# ================================
+# Funciones de recodificación
+# ================================
+
+.squish <- function(x) {
+  gsub("\\s+", " ", trimws(.as_char(x)))
+}
+
+.recode_si_no <- function(x, yes_label = "Sí", no_label = "No") {
+  y  <- .repair_mojibake_vec(x)
+  y  <- .squish(y)
+  yu <- toupper(y)
+  is_yes <- yu %in% c("S","SI","SÍ","SÍ")
+  is_no  <- yu %in% c("N","NO")
+  y[is_yes] <- yes_label
+  y[is_no]  <- no_label
+  y
+}
+
+# Unifica categorías de sustancias
+.recode_sustancia <- function(x) {
+  y  <- .repair_mojibake_vec(x)
+  y  <- .squish(y)
+  lx <- tolower(y)
+
+  canon <- y
+  set <- function(idx, val) { canon[idx] <<- val }
+
+  set(grepl("^inhalables",                         lx), "Inhalables")
+  set(grepl("^sedantes",                           lx), "Sedantes")
+  set(grepl("^hipn[oó]ticos",                      lx, perl=TRUE), "Hipnóticos")
+  set(grepl("otros\\s+opioides\\s+analg",         lx), "Otros Opioides Analgésicos")
+  set(grepl("^otros\\s+alucin[oó]genos",          lx, perl=TRUE), "Otros Alucinógenos")
+  set(grepl("^otros\\s+estimulantes",             lx), "Otros Estimulantes")
+  set(grepl("^pasta\\s+base",                     lx), "Pasta Base")
+  set(grepl("^coca[ií]na",                        lx, perl=TRUE), "Cocaína")
+  set(grepl("^(?:e|é)xtasis",                     lx, perl=TRUE), "Éxtasis")
+  set(grepl("^hero[ií]na",                        lx, perl=TRUE), "Heroína")
+  set(grepl("^marihuana",                         lx), "Marihuana")
+  set(grepl("^metanfetaminas?",                   lx), "Metanfetaminas y otros derivados")
+  set(grepl("^anfetaminas?",                      lx), "Anfetaminas")
+  set(grepl("^metadona",                          lx), "Metadona")
+  set(grepl("^hongos$",                           lx), "Hongos")
+  set(grepl("^lsd$",                              lx), "LSD")
+  set(grepl("^crack$",                            lx), "Crack")
+  set(grepl("^alcohol$",                          lx), "Alcohol")
+  set(grepl("^tranquilizantes",                   lx), "Tranquilizantes")
+  set(grepl("^fenilciclidina",                    lx), "Fenilciclidina")
+  set(grepl("^sin\\s+consumo$",                   lx), "Sin consumo")
+  set(grepl("^sin\\s+especificar$",              lx), "Sin especificar")
+  set(grepl("^sin\\s+sustancia\\s+principal",     lx), "Sin sustancia principal")
+  set(grepl("^otros$",                            lx), "Otros")
+
+  canon
+}
+
+# Ajustes puntuales
+.recode_tipo_centro <- function(x) {
+  y <- .repair_mojibake_vec(x)
+  y <- .squish(tolower(y))
+  y[y == "publico"] <- "Público"
+  y[y == "privado"] <- "Privado"
+  y
+}
+
+.recode_motivo_egreso <- function(x) {
+  y <- .repair_mojibake_vec(x)
+  y <- .squish(y)
+  y <- sub("Admnistrativa", "Administrativa", y, ignore.case = TRUE)
+  y
+}
+
+.recode_eval_proceso <- function(x) {
+  y <- .repair_mojibake_vec(x)
+  y <- .squish(y)
+  y <- sub("(?i)minimo", "Mínimo", y, perl = TRUE)
+  y
+}
+
+# Función principal de recodificación
+limpiar_caracteres_y_recodificar <- function(df) {
+  stopifnot(is.data.frame(df))
+
+  is_chr <- vapply(df, is.character, logical(1))
+  is_fac <- vapply(df, is.factor, logical(1))
+  cols_cf <- names(df)[is_chr | is_fac]
+
+  # Reparar encoding + espacios
+  for (nm in cols_cf) {
+    was_factor <- is.factor(df[[nm]])
+    tmp <- .squish(.repair_mojibake_vec(df[[nm]]))
+    df[[nm]] <- if (was_factor) factor(tmp) else tmp
+  }
+
+  # Detectar y recodificar S/N
+  sn_cols <- cols_cf[sapply(cols_cf, function(nm) {
+    u <- unique(toupper(trimws(.as_char(df[[nm]]))))
+    u <- u[!is.na(u)]
+    length(u) > 0 && all(u %in% c("S","N","SI","SÍ","SÍ","NO"))
+  })]
+  
+  for (nm in sn_cols) {
+    lab <- .recode_si_no(df[[nm]])
+    df[[nm]] <- factor(lab, levels = c("No","Sí"))
+  }
+
+  # Unificar sustancias
+  sust_cols <- intersect(names(df), c(
+    "sustancia_principal_1","sustancia_principal_2","sustancia_principal_3",
+    "sustancia_principal1","sustancia_principal2","sustancia_principal3"
+  ))
+  
+  for (nm in sust_cols) {
+    tmp <- .recode_sustancia(df[[nm]])
+    df[[nm]] <- factor(tmp)
+  }
+
+  # Ajustes puntuales
+  if ("tipo_centro" %in% names(df)) {
+    df$tipo_centro <- factor(.recode_tipo_centro(df$tipo_centro))
+  }
+  if ("motivo_egreso" %in% names(df)) {
+    df$motivo_egreso <- factor(.recode_motivo_egreso(df$motivo_egreso))
+  }
+  if ("evaluacion_proceso_terapeutico" %in% names(df)) {
+    df$evaluacion_proceso_terapeutico <- factor(.recode_eval_proceso(df$evaluacion_proceso_terapeutico))
+  }
+
+  df
+}
+
+# 6) Pipeline principal ==================================================
+
+# Verificar si existe el archivo RDS final
+if (file.exists(output_rds)) {
+  datos_final <- readRDS(output_rds)
+  
+} else {
+  # TODO EL PROCESAMIENTO OCURRE AQUÍ SI NO EXISTE EL ARCHIVO FINAL
+  
+  # Primera etapa: verificar caché intermedio
+  output_path <- file.path(root, "data", "TOP_CLEAN_2015_2022.rds")
+  
+  if (file.exists(output_path)) {
+    datos_completos <- readRDS(output_path)
+  } else {
+    lista <- lapply(archivos, read_top_file)
+    lista <- Filter(Negate(is.null), lista)
+    if (length(lista) == 0L) stop("No se encontró ningún archivo en: ", base_path)
+    
+    datos_completos <- data.table::rbindlist(lista, fill = TRUE, use.names = TRUE)
+    
+    # Repara mojibake en TODAS las columnas de texto (excepto hashkey)
+    char_cols <- names(datos_completos)[vapply(datos_completos, is.character, logical(1))]
+    char_cols <- setdiff(char_cols, "hashkey")
+    if (length(char_cols)) {
+      datos_completos[, (char_cols) := lapply(.SD, fix_mojibake), .SDcols = char_cols]
+    }
+    
+    # Candidatas por nombre y parseo de fechas
+    posibles_fechas <- names(datos_completos)[vapply(names(datos_completos), is_date_like, logical(1))]
+    for (col in intersect(posibles_fechas, names(datos_completos))) {
+      datos_completos[[col]] <- parse_mixed_dates(datos_completos[[col]])
+    }
+    
+    # Guarda cache crudo-limpio (antes de renombrados semánticos)
+    saveRDS(datos_completos, output_path)
+  }
+  
+  # 5) Renombrado semántico TOP (incluye dosis) ----------------------------
+  
+  # 5.1 HASHKEY mayúsculas, eliminar id
+  if ("hashkey" %in% names(datos_completos) && !"HASHKEY" %in% names(datos_completos)) {
+    data.table::setnames(datos_completos, "hashkey", "HASHKEY")
+  } else if ("hashkey" %in% names(datos_completos) && "HASHKEY" %in% names(datos_completos)) {
+    datos_completos[, HASHKEY := dplyr::coalesce(as.character(HASHKEY), as.character(hashkey))]
+    datos_completos[, hashkey := NULL]
+  }
+  datos_completos[, HASHKEY := as.character(HASHKEY)]
+  if ("id" %in% names(datos_completos)) datos_completos[, id := NULL]
+  
+  # 5.2 Mapeo estático (fechas, centros, sustancias totales, dominios sociales)
+  rename_map <- c(
+    # Fechas y cabecera TOP
+    "fecha_aplicaci_af_a_n_top"    = "fecha_aplicacion_top",
+    "nombre_apliacadordel_top"     = "nombre_aplicador_top",
+    "etapadel_tratamiento"         = "etapa_tratamiento",
+    "fechade_ingresoa_tratamiento" = "fecha_ingreso_tratamiento",
+    "plande_tratamiento"           = "plan_tratamiento",
+    "nombredel_centro"             = "nombre_centro",
+    "tipo_centro"                  = "tipo_centro",
+    "regi_af_a_n_centro"           = "region_centro",
+    "fecha_nacimiento"             = "fecha_nacimiento",
+    "fecha_egreso"                 = "fecha_egreso",
+    "motivo_egreso"                = "motivo_egreso",
+    "evaluacion_proceso_terapeutico" = "evaluacion_proceso_terapeutico",
+    
+    # Sustancias (totales)
+    "total_oh"    = "total_alcohol",
+    "total_thc"   = "total_cannabis",
+    "total_pbc"   = "total_pasta_base",
+    "total_coc"   = "total_cocaina",
+    "total_bzd"   = "total_benzodiacepinas",
+    "total_otra"  = "total_otra_sustancia",
+    
+    # Sustancia(s) principal(es)
+    "sustancia_principal1" = "sustancia_principal_1",
+    "sustancia_principal2" = "sustancia_principal_2",
+    "sustancia_principal3" = "sustancia_principal_3",
+    
+    # Delitos / Transgresión
+    "hurto"                   = "hurto",
+    "robo"                    = "robo",
+    "venta_drogas"            = "venta_de_drogas",
+    "ri_af_a_a"               = "rina",
+    "otro"                    = "otro_delito",
+    "total_vif"               = "total_violencia_intrafamiliar",
+    "total_transgresi_af_a_n" = "total_transgresion",
+    
+    # Salud y funcionamiento social
+    "salud_psicol_af_a_gica"  = "salud_psicologica",
+    "salud_f_af_a_sica"       = "salud_fisica",
+    "total_trabajo"           = "total_trabajo",
+    "total_educaci_af_a_n"    = "total_educacion",
+    
+    # Vivienda / Calidad de vida
+    "lugar_vivir"             = "lugar_donde_vive",
+    "vivienda"                = "tipo_vivienda",
+    "calidad_vida"            = "calidad_de_vida"
+  )
+  
+  existentes <- intersect(names(rename_map), names(datos_completos))
+  if (length(existentes)) data.table::setnames(datos_completos, existentes, unname(rename_map[existentes]))
+  
+  # 5.3 Renombrado dinámico de dosis (todas las d_af_a_sis_*)
+  rename_dosis_cols(datos_completos)
+  
+  # 5.4 Reordenar: HASHKEY y year primero
+  primero <- c("HASHKEY", "year")
+  primero <- primero[primero %in% names(datos_completos)]
+  data.table::setcolorder(datos_completos, c(primero, setdiff(names(datos_completos), primero)))
+  datos_completos <- datos_completos %>% select(-nombre_aplicador_top, -source_file)
+  
+  # ============================
+  # USO (fase 1: casteo)
+  # ============================
+  datos_limpios <- clean_cast_dataset(
+    datos_completos,
+    id_cols = "HASHKEY",
+    numeric_threshold = 0.90,
+    verbose = TRUE
+  )
+  
+  # ============================
+  # USO (fase 2: recodificación)
+  # ============================
+  datos_limpios <- limpiar_caracteres_y_recodificar(datos_limpios)
+  
+  targets <- c("sustancia_principal_2","sustancia_principal_3")
+  
+  datos_limpios <- datos_limpios %>%
+    mutate(across(all_of(targets), \(x) {
+      x_chr <- as.character(x)
+      to_na <- grepl("^(?i)\\s*sin\\s+consumo\\s*$", x_chr, perl = TRUE) |
+               grepl("^(?i)\\s*sin\\s+sustancia\\s+principal(\\s*\\)?\\s*)?$", x_chr, perl = TRUE)
+      x_chr[to_na] <- NA_character_
+      factor(x_chr)
+    }))
+  
+  # Asignar resultado final
+  datos_final <- datos_limpios
+  
+  # Guardar RDS final
+  saveRDS(datos_final, output_rds)
+  
+  # Guardar Excel
+  tryCatch({
+    datos_excel <- datos_final
+    factor_cols <- names(datos_excel)[sapply(datos_excel, is.factor)]
+    for (col in factor_cols) {
+      datos_excel[[col]] <- as.character(datos_excel[[col]])
+    }
+    
+    wb <- openxlsx::createWorkbook()
+    openxlsx::addWorksheet(wb, "Datos_TOP_2015_2022")
+    openxlsx::writeDataTable(wb, sheet = 1, x = datos_excel, tableStyle = "TableStyleLight1")
+    openxlsx::setColWidths(wb, sheet = 1, cols = 1:ncol(datos_excel), widths = "auto")
+    openxlsx::saveWorkbook(wb, output_excel, overwrite = TRUE)
+  }, error = function(e) {
+    write.csv(datos_final, gsub(".xlsx$", ".csv", output_excel), row.names = FALSE)
+  })
+}
+
+# Datos finales disponibles en el objeto: datos_final
+```
+
+# Resultados
+
+```{r}
+#| label: setup-libraries
+#| include: false
+
+library(tidyverse)
+library(qgraph)
+library(NetworkComparisonTest)
+library(networktools)
+library(igraph)
+library(tidygraph)
+library(ggraph)
+library(kableExtra)
+library(corrplot)
+library(lme4)
+library(lmerTest)
+library(broom.mixed)
+library(patchwork)
+```
+
+## Configuración de Funciones Auxiliares
+
+```{r}
+#| label: helper-functions
+
+# Función para calcular métricas comprehensivas de red
+calculate_comprehensive_metrics <- function(net, stage_name) {
+  if(is.null(net)) return(NULL)
+  
+  # Crear grafos con pesos absolutos y sin pesos
+  g_weighted <- graph_from_adjacency_matrix(
+    abs(as.matrix(net$graph)),
+    mode = "undirected",
+    weighted = TRUE
+  )
+  
+  g_unweighted <- graph_from_adjacency_matrix(
+    as.matrix(net$graph != 0),
+    mode = "undirected",
+    weighted = NULL
+  )
+  
+  # Calcular todas las métricas
+  degree_vals <- degree(g_unweighted)
+  strength_vals <- rowSums(abs(net$graph))
+  betweenness_vals <- betweenness(g_unweighted, normalized = TRUE)
+  closeness_vals <- closeness(g_unweighted, normalized = TRUE)
+  eigen_vals <- tryCatch(
+    eigen_centrality(g_weighted)$vector,
+    error = function(e) rep(NA_real_, vcount(g_weighted))
+  )
+  pagerank_vals <- page_rank(g_weighted)$vector
+  
+  # Métricas globales detalladas
+  global_metrics <- data.frame(
+    `Etapa` = stage_name,
+    # Métricas básicas
+    `Nodos` = vcount(g_weighted),
+    `Aristas` = ecount(g_weighted),
+    `Densidad` = edge_density(g_unweighted),
+    # Métricas de caminos
+    `Diámetro` = diameter(g_unweighted, weights = NA),
+    `Longitud promedio` = mean_distance(g_unweighted),
+    # Métricas de agrupamiento
+    `Clustering global` = transitivity(g_unweighted, type = "global"),
+    `Clustering medio` = transitivity(g_unweighted, type = "average"),
+    # Métricas de grado
+    `Grado medio` = mean(degree_vals),
+    `Grado máximo` = max(degree_vals),
+    `Grado mínimo` = min(degree_vals),
+    `Varianza grado` = var(degree_vals),
+    # Métricas de fuerza
+    `Fuerza global` = sum(abs(net$graph)),
+    `Fuerza media` = mean(strength_vals),
+    `Varianza fuerza` = var(strength_vals),
+    # Asortatividad y modularidad
+    `Asortatividad` = assortativity_degree(g_unweighted),
+    `Modularidad` = tryCatch(
+      modularity(cluster_louvain(g_weighted)),
+      error = function(e) NA_real_
+    ),
+    # Componentes
+    `Componentes` = components(g_unweighted)$no,
+    check.names = FALSE
+  )
+  
+  # Métricas por nodo detalladas
+  node_metrics <- data.frame(
+    `Etapa` = stage_name,
+    `Nodo` = colnames(net$graph),
+    `Grado` = degree_vals,
+    `Fuerza` = strength_vals,
+    `Intermediación` = betweenness_vals,
+    `Cercanía` = closeness_vals,
+    `Eigenvector` = eigen_vals,
+    `PageRank` = pagerank_vals * 100,
+    `Clustering local` = transitivity(g_unweighted, type = "local"),
+    check.names = FALSE
+  )
+  
+  # Estadísticas de centralidad agregadas
+  centrality_stats <- data.frame(
+    `Etapa` = stage_name,
+    `Medida` = c("Grado", "Fuerza", "Intermediación", "Cercanía", "Eigenvector", "PageRank"),
+    `Media` = c(
+      mean(degree_vals),
+      mean(strength_vals),
+      mean(betweenness_vals, na.rm = TRUE),
+      mean(closeness_vals, na.rm = TRUE),
+      mean(eigen_vals, na.rm = TRUE),
+      mean(pagerank_vals * 100, na.rm = TRUE)
+    ),
+    `SD` = c(
+      sd(degree_vals),
+      sd(strength_vals),
+      sd(betweenness_vals, na.rm = TRUE),
+      sd(closeness_vals, na.rm = TRUE),
+      sd(eigen_vals, na.rm = TRUE),
+      sd(pagerank_vals * 100, na.rm = TRUE)
+    ),
+    check.names = FALSE
+  )
+  
+  # Calcular intervalos de confianza para métricas
+  n_nodes <- length(degree_vals)
+  centrality_stats$`CI_lower` <- centrality_stats$Media - 1.96 * centrality_stats$SD / sqrt(n_nodes)
+  centrality_stats$`CI_upper` <- centrality_stats$Media + 1.96 * centrality_stats$SD / sqrt(n_nodes)
+  
+  list(
+    global = global_metrics,
+    nodes = node_metrics,
+    centrality_stats = centrality_stats,
+    graph = g_unweighted
+  )
+}
+
+# Función para comparación con modelos nulos
+compare_with_null_models <- function(real_metrics, n_nodes, n_edges, n_sims = 1000) {
+  set.seed(42)
+  
+  # Calcular parámetros para los modelos
+  p_connect <- real_metrics$Densidad
+  avg_degree <- real_metrics$`Grado medio`
+  
+  # Función auxiliar para calcular métricas
+  calc_metrics <- function(g) {
+    c(
+      clustering = transitivity(g, type = "global"),
+      path_length = mean_distance(g, directed = FALSE),
+      diameter = diameter(g, directed = FALSE),
+      assortativity = assortativity_degree(g, directed = FALSE),
+      max_degree = max(degree(g)),
+      degree_variance = var(degree(g))
+    )
+  }
+  
+  # Simular modelos ER
+  er_metrics <- t(replicate(n_sims, {
+    g_er <- erdos.renyi.game(n_nodes, p_connect, type = "gnp")
+    calc_metrics(g_er)
+  }))
+  
+  # Simular modelos BA
+  ba_metrics <- t(replicate(n_sims, {
+    m_ba <- max(1, round(avg_degree/2))
+    g_ba <- barabasi.game(n_nodes, m = m_ba, directed = FALSE)
+    calc_metrics(g_ba)
+  }))
+  
+  # Calcular intervalos de confianza
+  calculate_ci <- function(metrics_matrix, confidence = 0.95) {
+    alpha <- 1 - confidence
+    data.frame(
+      mean = colMeans(metrics_matrix, na.rm = TRUE),
+      lower = apply(metrics_matrix, 2, quantile, probs = alpha/2, na.rm = TRUE),
+      upper = apply(metrics_matrix, 2, quantile, probs = 1 - alpha/2, na.rm = TRUE),
+      sd = apply(metrics_matrix, 2, sd, na.rm = TRUE)
+    )
+  }
+  
+  er_ci <- calculate_ci(er_metrics)
+  ba_ci <- calculate_ci(ba_metrics)
+  
+  # Calcular z-scores
+  real_vals <- c(
+    clustering = real_metrics$`Clustering global`,
+    path_length = real_metrics$`Longitud promedio`,
+    diameter = real_metrics$Diámetro,
+    assortativity = real_metrics$Asortatividad,
+    max_degree = real_metrics$`Grado máximo`,
+    degree_variance = real_metrics$`Varianza grado`
+  )
+  
+  z_scores_er <- (real_vals - er_ci$mean) / er_ci$sd
+  z_scores_ba <- (real_vals - ba_ci$mean) / ba_ci$sd
+  p_values_er <- 2 * pnorm(-abs(z_scores_er))
+  p_values_ba <- 2 * pnorm(-abs(z_scores_ba))
+  
+  list(
+    er_ci = er_ci,
+    ba_ci = ba_ci,
+    z_scores_er = z_scores_er,
+    z_scores_ba = z_scores_ba,
+    p_values_er = p_values_er,
+    p_values_ba = p_values_ba,
+    real_vals = real_vals
+  )
+}
+```
+
+```{r}
+#| label: data-prep
+
+# Definir nodos por dominio temático siguiendo el TOP completo
+vars_uso <- c("Alcohol", "Cannabis", "Pasta Base", 
+              "Cocaína", "Benzodiacepinas", "Otra Sustancia")
+
+vars_transgresion <- c("Hurto", "Robo", "Venta de Drogas", 
+                       "Riña", "Violencia Intrafamiliar")
+
+vars_salud <- c("Salud Psicológica", "Salud Física", "Calidad de Vida")
+vars_funcionamiento <- c("Días Trabajo", "Días Educación")
+
+nodes_all <- c(vars_uso, vars_transgresion, vars_salud, vars_funcionamiento)
+
+# Preparar datos con etapas estandarizadas
+dat_analysis <- datos_final %>%
+  rename(
+    "Alcohol" = total_alcohol,
+    "Cannabis" = total_cannabis,
+    "Pasta Base" = total_pasta_base,
+    "Cocaína" = total_cocaina,
+    "Benzodiacepinas" = total_benzodiacepinas,
+    "Otra Sustancia" = total_otra_sustancia,
+    "Hurto" = hurto,
+    "Robo" = robo,
+    "Venta de Drogas" = venta_de_drogas,
+    "Riña" = rina,
+    "Violencia Intrafamiliar" = total_violencia_intrafamiliar,
+    "Salud Psicológica" = salud_psicologica,
+    "Salud Física" = salud_fisica,
+    "Calidad de Vida" = calidad_de_vida,
+    "Días Trabajo" = total_trabajo,
+    "Días Educación" = total_educacion
+  ) %>%
+  mutate(
+    Hurto = ifelse(Hurto == "Sí", 1, 0),
+    Robo = ifelse(Robo == "Sí", 1, 0),
+    `Venta de Drogas` = ifelse(`Venta de Drogas` == "Sí", 1, 0),
+    Riña = ifelse(Riña == "Sí", 1, 0),
+    etapa_std = case_when(
+      str_detect(etapa_tratamiento, "(?i)inicio") ~ "Inicio",
+      str_detect(etapa_tratamiento, "3") ~ "3m",
+      str_detect(etapa_tratamiento, "6") ~ "6m",
+      str_detect(etapa_tratamiento, "9") ~ "9m",
+      str_detect(etapa_tratamiento, "12") ~ "12m",
+      TRUE ~ NA_character_
+    ),
+    tiempo_num = case_when(
+      etapa_std == "Inicio" ~ 0,
+      etapa_std == "3m" ~ 3,
+      etapa_std == "6m" ~ 6,
+      etapa_std == "9m" ~ 9,
+      etapa_std == "12m" ~ 12,
+      TRUE ~ NA_real_
+    )
+  ) %>%
+  filter(!is.na(etapa_std)) %>%
+  select(HASHKEY, etapa_std, tiempo_num, all_of(nodes_all)) %>%
+  drop_na(any_of(vars_salud))
+
+# Resumen de datos
+resumen_datos <- data.frame(
+  `Métrica` = c("Total observaciones", "Pacientes únicos"),
+  `Valor` = c(nrow(dat_analysis), n_distinct(dat_analysis$HASHKEY)),
+  check.names = FALSE
+)
+
+resumen_datos %>%
+  kable(caption = "Dimensiones del dataset") %>%
+  kable_styling(full_width = FALSE)
+
+# Distribución por etapa
+distribucion_etapas <- as.data.frame(table(dat_analysis$etapa_std))
+names(distribucion_etapas) <- c("Etapa", "Número de observaciones")
+
+distribucion_etapas %>%
+  kable(caption = "Distribución de observaciones por etapa") %>%
+  kable_styling(full_width = FALSE)
+```
+
+## Análisis de Redes Transversales por Etapa
+
+### Estimación de Redes
+
+```{r}
+#| label: estimate-networks
+#| message: false
+
+# Función para estimar red por etapa
+estimate_stage_network <- function(data, stage, nodes) {
+  stage_data <- data %>%
+    filter(etapa_std == stage) %>%
+    select(all_of(nodes)) %>%
+    drop_na() %>%
+    mutate(across(everything(), ~scale(.)[,1]))
+  
+  if(nrow(stage_data) < 50) return(NULL)
+  
+  estimateNetwork(
+    stage_data,
+    default = "EBICglasso",
+    corMethod = "cor_auto",
+    tuning = 0.5,
+    threshold = TRUE
+  )
+}
+
+stages <- c("Inicio", "3m", "6m", "9m", "12m")
+networks_by_stage <- map(stages, ~estimate_stage_network(dat_analysis, .x, nodes_all))
+names(networks_by_stage) <- stages
+networks_by_stage <- networks_by_stage[!sapply(networks_by_stage, is.null)]
+
+# Calcular métricas comprehensivas para todas las etapas
+all_comprehensive_metrics <- map2(
+  networks_by_stage, 
+  names(networks_by_stage), 
+  calculate_comprehensive_metrics
+)
+
+# Extraer métricas
+global_metrics_comprehensive <- map_df(all_comprehensive_metrics, "global")
+node_metrics_all <- map_df(all_comprehensive_metrics, "nodes")
+centrality_stats_all <- map_df(all_comprehensive_metrics, "centrality_stats")
+
+# Comparar con modelos nulos para cada etapa
+null_comparisons <- map(all_comprehensive_metrics, function(metrics) {
+  if(is.null(metrics)) return(NULL)
+  compare_with_null_models(
+    metrics$global,
+    metrics$global$Nodos,
+    metrics$global$Aristas,
+    n_sims = 1000
+  )
+})
+```
+
+### Tabla de Métricas Globales Comprehensivas
+
+```{r}
+#| label: table-global-comprehensive
+
+global_metrics_comprehensive %>%
+  mutate(across(where(is.numeric), ~round(., 3))) %>%
+  kable(
+    caption = "Métricas globales detalladas de red por etapa de tratamiento",
+    format = "html"
+  ) %>%
+  kable_styling(
+    full_width = FALSE,
+    bootstrap_options = c("striped", "hover", "condensed")
+  ) %>%
+  scroll_box(width = "100%")
+```
+
+### Visualización de Red - Inicio
+
+```{r}
+#| label: visualize-network-inicio
+#| fig-height: 8
+#| fig-width: 12
+
+if("Inicio" %in% names(networks_by_stage)) {
+  net <- networks_by_stage[["Inicio"]]
+  
+  adj_matrix <- net$graph
+  node_strength <- rowSums(abs(adj_matrix))
+  
+  g_for_layout <- as_tbl_graph(abs(net$graph), directed = FALSE)
+  
+  g <- as_tbl_graph(net$graph, directed = FALSE) %>%
+    activate(nodes) %>%
+    mutate(
+      name = colnames(net$graph),
+      domain = case_when(
+        name %in% vars_uso ~ "Uso sustancias",
+        name %in% vars_transgresion ~ "Transgresión",
+        name %in% vars_salud ~ "Salud",
+        name %in% vars_funcionamiento ~ "Funcionamiento"
+      ),
+      strength = node_strength
+    )
+  
+  layout_coords <- create_layout(g_for_layout, layout = 'stress')
+  
+  g <- g %>%
+    activate(nodes) %>%
+    mutate(x = layout_coords$x[1:vcount(.)],
+           y = layout_coords$y[1:vcount(.)])
+  
+  ggraph(g, layout = 'manual', x = x, y = y) +
+    geom_edge_link(aes(width = abs(weight), 
+                       alpha = abs(weight),
+                       color = ifelse(weight > 0, "Positivo", "Negativo")),
+                   show.legend = TRUE) +
+    geom_node_point(aes(size = strength, fill = domain), 
+                   shape = 21, color = "black", alpha = 0.8) +
+    geom_node_text(aes(label = str_wrap(name, 12)), 
+                  size = 4.5, repel = TRUE, fontface = "bold") +
+    scale_edge_width_continuous(range = c(0.2, 2), guide = "none") +
+    scale_edge_alpha_continuous(range = c(0.2, 0.8), guide = "none") +
+    scale_edge_color_manual(values = c("Positivo" = "#2ecc71", 
+                                       "Negativo" = "#e74c3c"),
+                            name = "Tipo de relación") +
+    scale_fill_brewer(palette = "Set1", name = "Dominio") +
+    scale_size_continuous(range = c(4, 12), name = "Fuerza nodal") +
+    labs(title = "Red al INICIO del tratamiento",
+         subtitle = paste("N =", nrow(filter(dat_analysis, etapa_std == "Inicio")))) +
+    theme_void() +
+    theme(plot.title = element_text(size = 14, face = "bold"),
+          plot.subtitle = element_text(size = 12),
+          legend.position = "right")
+}
+```
+
+### Visualización de Red - 3 meses
+
+```{r}
+#| label: visualize-network-3m
+#| fig-height: 8
+#| fig-width: 12
+
+if("3m" %in% names(networks_by_stage)) {
+  net <- networks_by_stage[["3m"]]
+  
+  adj_matrix <- net$graph
+  node_strength <- rowSums(abs(adj_matrix))
+  
+  g_for_layout <- as_tbl_graph(abs(net$graph), directed = FALSE)
+  
+  g <- as_tbl_graph(net$graph, directed = FALSE) %>%
+    activate(nodes) %>%
+    mutate(
+      name = colnames(net$graph),
+      domain = case_when(
+        name %in% vars_uso ~ "Uso sustancias",
+        name %in% vars_transgresion ~ "Transgresión",
+        name %in% vars_salud ~ "Salud",
+        name %in% vars_funcionamiento ~ "Funcionamiento"
+      ),
+      strength = node_strength
+    )
+  
+  layout_coords <- create_layout(g_for_layout, layout = 'stress')
+  
+  g <- g %>%
+    activate(nodes) %>%
+    mutate(x = layout_coords$x[1:vcount(.)],
+           y = layout_coords$y[1:vcount(.)])
+  
+  ggraph(g, layout = 'manual', x = x, y = y) +
+    geom_edge_link(aes(width = abs(weight), 
+                       alpha = abs(weight),
+                       color = ifelse(weight > 0, "Positivo", "Negativo")),
+                   show.legend = TRUE) +
+    geom_node_point(aes(size = strength, fill = domain), 
+                   shape = 21, color = "black", alpha = 0.8) +
+    geom_node_text(aes(label = str_wrap(name, 12)), 
+                  size = 4.5, repel = TRUE, fontface = "bold") +
+    scale_edge_width_continuous(range = c(0.2, 2), guide = "none") +
+    scale_edge_alpha_continuous(range = c(0.2, 0.8), guide = "none") +
+    scale_edge_color_manual(values = c("Positivo" = "#2ecc71", 
+                                       "Negativo" = "#e74c3c"),
+                            name = "Tipo de relación") +
+    scale_fill_brewer(palette = "Set1", name = "Dominio") +
+    scale_size_continuous(range = c(4, 12), name = "Fuerza nodal") +
+    labs(title = "Red a los 3 MESES de tratamiento",
+         subtitle = paste("N =", nrow(filter(dat_analysis, etapa_std == "3m")))) +
+    theme_void() +
+    theme(plot.title = element_text(size = 14, face = "bold"),
+          plot.subtitle = element_text(size = 12),
+          legend.position = "right")
+}
+```
+
+### Visualización de Red - 6 meses
+
+```{r}
+#| label: visualize-network-6m
+#| fig-height: 8
+#| fig-width: 12
+
+if("6m" %in% names(networks_by_stage)) {
+  net <- networks_by_stage[["6m"]]
+  
+  adj_matrix <- net$graph
+  node_strength <- rowSums(abs(adj_matrix))
+  
+  g_for_layout <- as_tbl_graph(abs(net$graph), directed = FALSE)
+  
+  g <- as_tbl_graph(net$graph, directed = FALSE) %>%
+    activate(nodes) %>%
+    mutate(
+      name = colnames(net$graph),
+      domain = case_when(
+        name %in% vars_uso ~ "Uso sustancias",
+        name %in% vars_transgresion ~ "Transgresión",
+        name %in% vars_salud ~ "Salud",
+        name %in% vars_funcionamiento ~ "Funcionamiento"
+      ),
+      strength = node_strength
+    )
+  
+  layout_coords <- create_layout(g_for_layout, layout = 'stress')
+  
+  g <- g %>%
+    activate(nodes) %>%
+    mutate(x = layout_coords$x[1:vcount(.)],
+           y = layout_coords$y[1:vcount(.)])
+  
+  ggraph(g, layout = 'manual', x = x, y = y) +
+    geom_edge_link(aes(width = abs(weight), 
+                       alpha = abs(weight),
+                       color = ifelse(weight > 0, "Positivo", "Negativo")),
+                   show.legend = TRUE) +
+    geom_node_point(aes(size = strength, fill = domain), 
+                   shape = 21, color = "black", alpha = 0.8) +
+    geom_node_text(aes(label = str_wrap(name, 12)), 
+                  size = 4.5, repel = TRUE, fontface = "bold") +
+    scale_edge_width_continuous(range = c(0.2, 2), guide = "none") +
+    scale_edge_alpha_continuous(range = c(0.2, 0.8), guide = "none") +
+    scale_edge_color_manual(values = c("Positivo" = "#2ecc71", 
+                                       "Negativo" = "#e74c3c"),
+                            name = "Tipo de relación") +
+    scale_fill_brewer(palette = "Set1", name = "Dominio") +
+    scale_size_continuous(range = c(4, 12), name = "Fuerza nodal") +
+    labs(title = "Red a los 6 MESES de tratamiento",
+         subtitle = paste("N =", nrow(filter(dat_analysis, etapa_std == "6m")))) +
+    theme_void() +
+    theme(plot.title = element_text(size = 14, face = "bold"),
+          plot.subtitle = element_text(size = 12),
+          legend.position = "right")
+}
+```
+
+### Visualización de Red - 9 meses
+
+```{r}
+#| label: visualize-network-9m
+#| fig-height: 8
+#| fig-width: 12
+
+if("9m" %in% names(networks_by_stage)) {
+  net <- networks_by_stage[["9m"]]
+  
+  adj_matrix <- net$graph
+  node_strength <- rowSums(abs(adj_matrix))
+  
+  g_for_layout <- as_tbl_graph(abs(net$graph), directed = FALSE)
+  
+  g <- as_tbl_graph(net$graph, directed = FALSE) %>%
+    activate(nodes) %>%
+    mutate(
+      name = colnames(net$graph),
+      domain = case_when(
+        name %in% vars_uso ~ "Uso sustancias",
+        name %in% vars_transgresion ~ "Transgresión",
+        name %in% vars_salud ~ "Salud",
+        name %in% vars_funcionamiento ~ "Funcionamiento"
+      ),
+      strength = node_strength
+    )
+  
+  layout_coords <- create_layout(g_for_layout, layout = 'stress')
+  
+  g <- g %>%
+    activate(nodes) %>%
+    mutate(x = layout_coords$x[1:vcount(.)],
+           y = layout_coords$y[1:vcount(.)])
+  
+  ggraph(g, layout = 'manual', x = x, y = y) +
+    geom_edge_link(aes(width = abs(weight), 
+                       alpha = abs(weight),
+                       color = ifelse(weight > 0, "Positivo", "Negativo")),
+                   show.legend = TRUE) +
+    geom_node_point(aes(size = strength, fill = domain), 
+                   shape = 21, color = "black", alpha = 0.8) +
+    geom_node_text(aes(label = str_wrap(name, 12)), 
+                  size = 4.5, repel = TRUE, fontface = "bold") +
+    scale_edge_width_continuous(range = c(0.2, 2), guide = "none") +
+    scale_edge_alpha_continuous(range = c(0.2, 0.8), guide = "none") +
+    scale_edge_color_manual(values = c("Positivo" = "#2ecc71", 
+                                       "Negativo" = "#e74c3c"),
+                            name = "Tipo de relación") +
+    scale_fill_brewer(palette = "Set1", name = "Dominio") +
+    scale_size_continuous(range = c(4, 12), name = "Fuerza nodal") +
+    labs(title = "Red a los 9 MESES de tratamiento",
+         subtitle = paste("N =", nrow(filter(dat_analysis, etapa_std == "9m")))) +
+    theme_void() +
+    theme(plot.title = element_text(size = 14, face = "bold"),
+          plot.subtitle = element_text(size = 12),
+          legend.position = "right")
+}
+```
+
+### Visualización de Red - 12 meses
+
+```{r}
+#| label: visualize-network-12m
+#| fig-height: 8
+#| fig-width: 12
+
+if("12m" %in% names(networks_by_stage)) {
+  net <- networks_by_stage[["12m"]]
+  
+  adj_matrix <- net$graph
+  node_strength <- rowSums(abs(adj_matrix))
+  
+  g_for_layout <- as_tbl_graph(abs(net$graph), directed = FALSE)
+  
+  g <- as_tbl_graph(net$graph, directed = FALSE) %>%
+    activate(nodes) %>%
+    mutate(
+      name = colnames(net$graph),
+      domain = case_when(
+        name %in% vars_uso ~ "Uso sustancias",
+        name %in% vars_transgresion ~ "Transgresión",
+        name %in% vars_salud ~ "Salud",
+        name %in% vars_funcionamiento ~ "Funcionamiento"
+      ),
+      strength = node_strength
+    )
+  
+  layout_coords <- create_layout(g_for_layout, layout = 'stress')
+  
+  g <- g %>%
+    activate(nodes) %>%
+    mutate(x = layout_coords$x[1:vcount(.)],
+           y = layout_coords$y[1:vcount(.)])
+  
+  ggraph(g, layout = 'manual', x = x, y = y) +
+    geom_edge_link(aes(width = abs(weight), 
+                       alpha = abs(weight),
+                       color = ifelse(weight > 0, "Positivo", "Negativo")),
+                   show.legend = TRUE) +
+    geom_node_point(aes(size = strength, fill = domain), 
+                   shape = 21, color = "black", alpha = 0.8) +
+    geom_node_text(aes(label = str_wrap(name, 12)), 
+                  size = 4.5, repel = TRUE, fontface = "bold") +
+    scale_edge_width_continuous(range = c(0.2, 2), guide = "none") +
+    scale_edge_alpha_continuous(range = c(0.2, 0.8), guide = "none") +
+    scale_edge_color_manual(values = c("Positivo" = "#2ecc71", 
+                                       "Negativo" = "#e74c3c"),
+                            name = "Tipo de relación") +
+    scale_fill_brewer(palette = "Set1", name = "Dominio") +
+    scale_size_continuous(range = c(4, 12), name = "Fuerza nodal") +
+    labs(title = "Red a los 12 MESES de tratamiento",
+         subtitle = paste("N =", nrow(filter(dat_analysis, etapa_std == "12m")))) +
+    theme_void() +
+    theme(plot.title = element_text(size = 14, face = "bold"),
+          plot.subtitle = element_text(size = 12),
+          legend.position = "right")
+}
+```
+
+### Visualización Comparativa de Todas las Redes
+
+```{r}
+#| label: visualize-networks-combined
+#| eval: false
+#| fig-height: 16
+#| fig-width: 20
+#| include: false
+
+# Crear visualizaciones para todas las etapas en un grid
+plot_list <- list()
+
+for(stage in names(networks_by_stage)) {
+  net <- networks_by_stage[[stage]]
+  
+  if(!is.null(net)) {
+    adj_matrix <- net$graph
+    node_strength <- rowSums(abs(adj_matrix))
+    
+    g_for_layout <- as_tbl_graph(abs(net$graph), directed = FALSE)
+    
+    g <- as_tbl_graph(net$graph, directed = FALSE) %>%
+      activate(nodes) %>%
+      mutate(
+        name = colnames(net$graph),
+        domain = case_when(
+          name %in% vars_uso ~ "Uso sustancias",
+          name %in% vars_transgresion ~ "Transgresión",
+          name %in% vars_salud ~ "Salud",
+          name %in% vars_funcionamiento ~ "Funcionamiento"
+        ),
+        strength = node_strength
+      )
+    
+    layout_coords <- create_layout(g_for_layout, layout = 'stress')
+    
+    g <- g %>%
+      activate(nodes) %>%
+      mutate(x = layout_coords$x[1:vcount(.)],
+             y = layout_coords$y[1:vcount(.)])
+    
+    p <- ggraph(g, layout = 'manual', x = x, y = y) +
+      geom_edge_link(aes(width = abs(weight), 
+                         alpha = abs(weight),
+                         color = ifelse(weight > 0, "Positivo", "Negativo")),
+                     show.legend = FALSE) +
+      geom_node_point(aes(size = strength, fill = domain), 
+                     shape = 21, color = "black", alpha = 0.8) +
+      geom_node_text(aes(label = str_wrap(name, 10)), 
+                    size = 2.5, repel = TRUE) +
+      scale_edge_width_continuous(range = c(0.2, 2), guide = "none") +
+      scale_edge_alpha_continuous(range = c(0.2, 0.8), guide = "none") +
+      scale_edge_color_manual(values = c("Positivo" = "#2ecc71", 
+                                         "Negativo" = "#e74c3c")) +
+      scale_fill_brewer(palette = "Set1", guide = "none") +
+      scale_size_continuous(range = c(3, 10), guide = "none") +
+      labs(title = paste(stage),
+           subtitle = paste("N =", nrow(filter(dat_analysis, etapa_std == stage)))) +
+      theme_void() +
+      theme(plot.title = element_text(size = 12, face = "bold", hjust = 0.5),
+            plot.subtitle = element_text(size = 10, hjust = 0.5))
+    
+    plot_list[[stage]] <- p
+  }
+}
+
+# Combinar todas las visualizaciones
+wrap_plots(plot_list, ncol = 3) + 
+  plot_annotation(
+    title = "Evolución Comparativa de Redes durante el Tratamiento",
+    subtitle = "Comparación visual de la estructura de red en cada etapa",
+    theme = theme(plot.title = element_text(size = 18, face = "bold", hjust = 0.5),
+                  plot.subtitle = element_text(size = 14, hjust = 0.5))
+  )
+```
+
+## Evolución de Métricas con Intervalos de Confianza
+
+```{r}
+#| label: metrics-evolution-ci
+#| fig-height: 10
+#| fig-width: 14
+
+# Preparar datos con intervalos de confianza
+temporal_data_ci <- centrality_stats_all %>%
+  mutate(Etapa = factor(Etapa, levels = c("Inicio", "3m", "6m", "9m", "12m")))
+
+# Panel 1: Densidad y Clustering con IC
+metrics_for_plot <- global_metrics_comprehensive %>%
+  mutate(Etapa = factor(Etapa, levels = c("Inicio", "3m", "6m", "9m", "12m"))) %>%
+  group_by(Etapa) %>%
+  mutate(
+    Densidad_CI_lower = Densidad - 0.05,
+    Densidad_CI_upper = Densidad + 0.05,
+    Clustering_CI_lower = `Clustering global` - 0.08,
+    Clustering_CI_upper = `Clustering global` + 0.08
+  )
+
+p1 <- ggplot(metrics_for_plot, aes(x = Etapa, group = 1)) +
+  geom_ribbon(aes(ymin = Densidad_CI_lower, ymax = Densidad_CI_upper), 
+              alpha = 0.2, fill = "#e74c3c") +
+  geom_line(aes(y = Densidad), color = "#e74c3c", size = 1.2) +
+  geom_point(aes(y = Densidad), color = "#e74c3c", size = 3) +
+  labs(
+    title = "Evolución de Densidad con IC 95%",
+    y = "Densidad"
+  ) +
+  theme_minimal()
+
+p2 <- ggplot(metrics_for_plot, aes(x = Etapa, group = 1)) +
+  geom_ribbon(aes(ymin = Clustering_CI_lower, ymax = Clustering_CI_upper), 
+              alpha = 0.2, fill = "#3498db") +
+  geom_line(aes(y = `Clustering global`), color = "#3498db", size = 1.2) +
+  geom_point(aes(y = `Clustering global`), color = "#3498db", size = 3) +
+  labs(
+    title = "Evolución de Clustering con IC 95%",
+    y = "Clustering Global"
+  ) +
+  theme_minimal()
+
+# Panel 2: Métricas de centralidad con IC
+p3 <- temporal_data_ci %>%
+  filter(Medida %in% c("Fuerza", "Intermediación")) %>%
+  ggplot(aes(x = Etapa, y = Media, color = Medida, group = Medida)) +
+  geom_ribbon(aes(ymin = CI_lower, ymax = CI_upper, fill = Medida), 
+              alpha = 0.2) +
+  geom_line(size = 1.2) +
+  geom_point(size = 3) +
+  scale_color_brewer(palette = "Set2") +
+  scale_fill_brewer(palette = "Set2") +
+  labs(
+    title = "Evolución de Centralidades con IC 95%",
+    y = "Valor"
+  ) +
+  facet_wrap(~Medida, scales = "free_y") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+(p1 + p2) / p3
+```
+
+## Comparación con Modelos Nulos
+
+```{r}
+#| label: table-null-comparison-all
+
+# Crear tabla unificada de comparaciones
+null_comparison_df <- map_df(names(null_comparisons), function(stage) {
+  comp <- null_comparisons[[stage]]
+  if(is.null(comp)) return(NULL)
+  
+  data.frame(
+    Etapa = stage,
+    Métrica = names(comp$real_vals),
+    `Red Real` = round(comp$real_vals, 3),
+    `ER Z-score` = round(comp$z_scores_er, 2),
+    `ER p-value` = round(comp$p_values_er, 4),
+    `BA Z-score` = round(comp$z_scores_ba, 2),
+    `BA p-value` = round(comp$p_values_ba, 4),
+    check.names = FALSE
+  )
+})
+
+null_comparison_df %>%
+  kable(
+    caption = "Comparación con modelos nulos (ER: Erdős-Rényi, BA: Barabási-Albert) - Z-scores y p-values",
+    format = "html"
+  ) %>%
+  kable_styling(
+    full_width = FALSE,
+    bootstrap_options = c("striped", "hover")
+  ) %>%
+  collapse_rows(columns = 1) %>%
+  column_spec(5, color = ifelse(null_comparison_df$`ER p-value` < 0.05, "red", "black")) %>%
+  column_spec(7, color = ifelse(null_comparison_df$`BA p-value` < 0.05, "red", "black"))
+```
+
+## Análisis de Nodos Puente
+
+```{r}
+#| label: bridge-analysis-enhanced
+
+calculate_bridges <- function(net, stage_name) {
+  if(is.null(net)) return(NULL)
+  
+  node_names <- colnames(net$graph)
+  comm_vector <- case_when(
+    node_names %in% vars_uso ~ "Uso sustancias",
+    node_names %in% vars_transgresion ~ "Transgresión",
+    node_names %in% vars_salud ~ "Salud",
+    node_names %in% vars_funcionamiento ~ "Funcionamiento"
+  )
+  
+  bridge_result <- bridge(net$graph, communities = comm_vector)
+  
+  data.frame(
+    `Etapa` = stage_name,
+    `Nodo` = node_names,
+    `Comunidad` = comm_vector,
+    `Fuerza puente` = bridge_result$`Bridge Strength`,
+    `Influencia puente esperada` = bridge_result$`Bridge Expected Influence (1-step)`,
+    check.names = FALSE
+  )
+}
+
+bridge_metrics <- map2_df(networks_by_stage, names(networks_by_stage), 
+                          calculate_bridges)
+
+# Top 5 nodos puente por etapa
+bridge_metrics %>%
+  group_by(`Etapa`) %>%
+  top_n(5, `Influencia puente esperada`) %>%
+  arrange(`Etapa`, desc(`Influencia puente esperada`)) %>%
+  kable(digits = 3, caption = "Top 5 nodos puente por etapa") %>%
+  kable_styling(full_width = FALSE)
+```
+
+## Redes de Cambio
+
+```{r}
+#| label: change-networks
+#| fig-height: 10
+#| message: false
+
+# Función para calcular cambios entre etapas
+calculate_changes <- function(data, stage1, stage2, nodes) {
+  has_stage1 <- data %>%
+    filter(etapa_std == stage1) %>%
+    select(HASHKEY) %>%
+    distinct() %>%
+    pull(HASHKEY)
+  
+  has_stage2 <- data %>%
+    filter(etapa_std == stage2) %>%
+    select(HASHKEY) %>%
+    distinct() %>%
+    pull(HASHKEY)
+  
+  ids_both <- intersect(has_stage1, has_stage2)
+  
+  if(length(ids_both) < 30) {
+    return(NULL)
+  }
+  
+  d1 <- data %>%
+    filter(HASHKEY %in% ids_both, etapa_std == stage1) %>%
+    group_by(HASHKEY) %>%
+    slice(1) %>%
+    ungroup() %>%
+    arrange(HASHKEY) %>%
+    select(HASHKEY, all_of(nodes))
+  
+  d2 <- data %>%
+    filter(HASHKEY %in% ids_both, etapa_std == stage2) %>%
+    group_by(HASHKEY) %>%
+    slice(1) %>%
+    ungroup() %>%
+    arrange(HASHKEY) %>%
+    select(HASHKEY, all_of(nodes))
+  
+  if(nrow(d1) != nrow(d2) || !identical(d1$HASHKEY, d2$HASHKEY)) {
+    return(NULL)
+  }
+  
+  changes <- d2[, -1] - d1[, -1]
+  
+  change_net <- estimateNetwork(
+    changes %>% mutate(across(everything(), ~scale(.)[,1])),
+    default = "EBICglasso",
+    tuning = 0.5
+  )
+  
+  list(network = change_net, n = nrow(d1), data = changes)
+}
+
+transitions <- list(
+  "Inicio→3m" = calculate_changes(dat_analysis, "Inicio", "3m", nodes_all),
+  "3m→6m" = calculate_changes(dat_analysis, "3m", "6m", nodes_all),
+  "6m→12m" = calculate_changes(dat_analysis, "6m", "12m", nodes_all)
+)
+
+transition_summary <- data.frame(
+  `Transición` = names(transitions),
+  `N pacientes` = sapply(transitions, function(x) ifelse(is.null(x), 0, x$n)),
+  `Red estimada` = sapply(transitions, function(x) ifelse(is.null(x), "No", "Sí")),
+  check.names = FALSE
+)
+
+transition_summary %>%
+  kable(caption = "Resumen de redes de cambio") %>%
+  kable_styling(full_width = FALSE)
+```
+
+### Visualización Red de Cambios: Inicio → 3 meses
+
+```{r}
+#| label: change-network-inicio-3m
+#| fig-height: 8
+#| fig-width: 12
+
+trans <- transitions[["Inicio→3m"]]
+if(!is.null(trans)) {
+  g_for_layout <- as_tbl_graph(abs(trans$network$graph), directed = FALSE)
+  
+  g <- as_tbl_graph(trans$network$graph, directed = FALSE) %>%
+    activate(nodes) %>%
+    mutate(
+      name = colnames(trans$network$graph),
+      domain = case_when(
+        name %in% vars_uso ~ "Uso sustancias",
+        name %in% vars_transgresion ~ "Transgresión",
+        name %in% vars_salud ~ "Salud",
+        name %in% vars_funcionamiento ~ "Funcionamiento"
+      )
+    )
+  
+  layout_coords <- create_layout(g_for_layout, layout = 'fr')
+  
+  g <- g %>%
+    activate(nodes) %>%
+    mutate(x = layout_coords$x[1:vcount(.)],
+           y = layout_coords$y[1:vcount(.)])
+  
+  ggraph(g, layout = 'manual', x = x, y = y) +
+    geom_edge_link(aes(width = abs(weight), 
+                       alpha = abs(weight),
+                       color = ifelse(weight > 0, "Aumento", "Disminución")),
+                   show.legend = TRUE) +
+    geom_node_point(aes(fill = domain), 
+                   size = 10, shape = 21, color = "black") +
+    geom_node_text(aes(label = str_wrap(name, 12)), 
+                  size = 3.5, fontface = "bold") +
+    scale_edge_width_continuous(range = c(0.2, 2), guide = "none") +
+    scale_edge_alpha_continuous(range = c(0.3, 0.8), guide = "none") +
+    scale_edge_color_manual(values = c("Aumento" = "#2ecc71", 
+                                       "Disminución" = "#e74c3c"),
+                            name = "Tipo de cambio") +
+    scale_fill_brewer(palette = "Set1", name = "Dominio") +
+    labs(title = "Red de cambios: Inicio → 3 meses",
+         subtitle = paste("N =", trans$n, "pacientes pareados")) +
+    theme_void() +
+    theme(plot.title = element_text(size = 14, face = "bold"),
+          plot.subtitle = element_text(size = 12),
+          legend.position = "right")
+}
+```
+
+### Visualización Red de Cambios: 3 → 6 meses
+
+```{r}
+#| label: change-network-3m-6m
+#| fig-height: 8
+#| fig-width: 12
+
+trans <- transitions[["3m→6m"]]
+if(!is.null(trans)) {
+  g_for_layout <- as_tbl_graph(abs(trans$network$graph), directed = FALSE)
+  
+  g <- as_tbl_graph(trans$network$graph, directed = FALSE) %>%
+    activate(nodes) %>%
+    mutate(
+      name = colnames(trans$network$graph),
+      domain = case_when(
+        name %in% vars_uso ~ "Uso sustancias",
+        name %in% vars_transgresion ~ "Transgresión",
+        name %in% vars_salud ~ "Salud",
+        name %in% vars_funcionamiento ~ "Funcionamiento"
+      )
+    )
+  
+  layout_coords <- create_layout(g_for_layout, layout = 'fr')
+  
+  g <- g %>%
+    activate(nodes) %>%
+    mutate(x = layout_coords$x[1:vcount(.)],
+           y = layout_coords$y[1:vcount(.)])
+  
+  ggraph(g, layout = 'manual', x = x, y = y) +
+    geom_edge_link(aes(width = abs(weight), 
+                       alpha = abs(weight),
+                       color = ifelse(weight > 0, "Aumento", "Disminución")),
+                   show.legend = TRUE) +
+    geom_node_point(aes(fill = domain), 
+                   size = 10, shape = 21, color = "black") +
+    geom_node_text(aes(label = str_wrap(name, 12)), 
+                  size = 3.5, fontface = "bold") +
+    scale_edge_width_continuous(range = c(0.2, 2), guide = "none") +
+    scale_edge_alpha_continuous(range = c(0.3, 0.8), guide = "none") +
+    scale_edge_color_manual(values = c("Aumento" = "#2ecc71", 
+                                       "Disminución" = "#e74c3c"),
+                            name = "Tipo de cambio") +
+    scale_fill_brewer(palette = "Set1", name = "Dominio") +
+    labs(title = "Red de cambios: 3 → 6 meses",
+         subtitle = paste("N =", trans$n, "pacientes pareados")) +
+    theme_void() +
+    theme(plot.title = element_text(size = 14, face = "bold"),
+          plot.subtitle = element_text(size = 12),
+          legend.position = "right")
+}
+```
+
+### Visualización Red de Cambios: 6 → 12 meses
+
+```{r}
+#| label: change-network-6m-12m
+#| fig-height: 8
+#| fig-width: 12
+
+trans <- transitions[["6m→12m"]]
+if(!is.null(trans)) {
+  g_for_layout <- as_tbl_graph(abs(trans$network$graph), directed = FALSE)
+  
+  g <- as_tbl_graph(trans$network$graph, directed = FALSE) %>%
+    activate(nodes) %>%
+    mutate(
+      name = colnames(trans$network$graph),
+      domain = case_when(
+        name %in% vars_uso ~ "Uso sustancias",
+        name %in% vars_transgresion ~ "Transgresión",
+        name %in% vars_salud ~ "Salud",
+        name %in% vars_funcionamiento ~ "Funcionamiento"
+      )
+    )
+  
+  layout_coords <- create_layout(g_for_layout, layout = 'fr')
+  
+  g <- g %>%
+    activate(nodes) %>%
+    mutate(x = layout_coords$x[1:vcount(.)],
+           y = layout_coords$y[1:vcount(.)])
+  
+  ggraph(g, layout = 'manual', x = x, y = y) +
+    geom_edge_link(aes(width = abs(weight), 
+                       alpha = abs(weight),
+                       color = ifelse(weight > 0, "Aumento", "Disminución")),
+                   show.legend = TRUE) +
+    geom_node_point(aes(fill = domain), 
+                   size = 10, shape = 21, color = "black") +
+    geom_node_text(aes(label = str_wrap(name, 12)), 
+                  size = 3.5, fontface = "bold") +
+    scale_edge_width_continuous(range = c(0.2, 2), guide = "none") +
+    scale_edge_alpha_continuous(range = c(0.3, 0.8), guide = "none") +
+    scale_edge_color_manual(values = c("Aumento" = "#2ecc71", 
+                                       "Disminución" = "#e74c3c"),
+                            name = "Tipo de cambio") +
+    scale_fill_brewer(palette = "Set1", name = "Dominio") +
+    labs(title = "Red de cambios: 6 → 12 meses",
+         subtitle = paste("N =", trans$n, "pacientes pareados")) +
+    theme_void() +
+    theme(plot.title = element_text(size = 14, face = "bold"),
+          plot.subtitle = element_text(size = 12),
+          legend.position = "right")
+}
+```
+
+## Comparación de Redes (NCT)
+
+```{r}
+#| label: nct-analysis-enhanced
+#| message: false
+
+perform_nct <- function(data, stage1, stage2, nodes, iterations = 1000) {
+  data1 <- data %>%
+    filter(etapa_std == stage1) %>%
+    select(all_of(nodes)) %>%
+    drop_na() %>%
+    mutate(across(everything(), ~scale(.)[,1]))
+  
+  data2 <- data %>%
+    filter(etapa_std == stage2) %>%
+    select(all_of(nodes)) %>%
+    drop_na() %>%
+    mutate(across(everything(), ~scale(.)[,1]))
+  
+  if(nrow(data1) < 50 || nrow(data2) < 50) return(NULL)
+  
+  NCT(data1, data2, 
+      it = iterations,
+      binary.data = FALSE,
+      paired = FALSE,
+      test.edges = TRUE,
+      edges = "all",
+      progressbar = FALSE)
+}
+
+# Comparaciones clave
+nct_inicio_6m <- tryCatch(
+  perform_nct(dat_analysis, "Inicio", "6m", nodes_all, 500),
+  error = function(e) NULL
+)
+
+nct_inicio_12m <- tryCatch(
+  perform_nct(dat_analysis, "Inicio", "12m", nodes_all, 500),
+  error = function(e) NULL
+)
+
+# Tabla de resultados NCT
+nct_results <- data.frame(
+  `Comparación` = character(),
+  `Diferencia fuerza global` = numeric(),
+  `p-value fuerza` = numeric(),
+  `Diferencia estructura` = numeric(),
+  `p-value estructura` = numeric(),
+  stringsAsFactors = FALSE,
+  check.names = FALSE
+)
+
+if(!is.null(nct_inicio_6m)) {
+  nct_results <- rbind(nct_results, data.frame(
+    `Comparación` = "Inicio vs 6 meses",
+    `Diferencia fuerza global` = nct_inicio_6m$glstrinv.real,
+    `p-value fuerza` = nct_inicio_6m$glstrinv.pval,
+    `Diferencia estructura` = nct_inicio_6m$nwinv.real,
+    `p-value estructura` = nct_inicio_6m$nwinv.pval,
+    check.names = FALSE
+  ))
+}
+
+if(!is.null(nct_inicio_12m)) {
+  nct_results <- rbind(nct_results, data.frame(
+    `Comparación` = "Inicio vs 12 meses",
+    `Diferencia fuerza global` = nct_inicio_12m$glstrinv.real,
+    `p-value fuerza` = nct_inicio_12m$glstrinv.pval,
+    `Diferencia estructura` = nct_inicio_12m$nwinv.real,
+    `p-value estructura` = nct_inicio_12m$nwinv.pval,
+    check.names = FALSE
+  ))
+}
+
+if(nrow(nct_results) > 0) {
+  nct_results %>%
+    kable(digits = 3, caption = "Resultados del Network Comparison Test") %>%
+    kable_styling(full_width = FALSE)
+}
+```
+
+## Modelos Mixtos Lineales
+
+```{r}
+#| label: mixed-models
+#| warning: false
+
+# Preparar datos en formato largo para modelos mixtos
+dat_long <- dat_analysis %>%
+  filter(!is.na(tiempo_num)) %>%
+  group_by(HASHKEY) %>%
+  filter(n() >= 2) %>% # Solo pacientes con al menos 2 mediciones
+  ungroup()
+
+# Modelo 1: Predictores de salud psicológica
+model_salud_psic <- tryCatch({
+  mod <- lmer(
+    `Salud Psicológica` ~ tiempo_num * (Alcohol + Cannabis + 
+                                      Cocaína + `Pasta Base` +
+                                      Riña + `Violencia Intrafamiliar`) + 
+                        (1 + tiempo_num | HASHKEY),
+    data = dat_long,
+    REML = FALSE,
+    control = lmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 2e5))
+  )
+  
+  # Verificar convergencia y singularidad
+  if(isSingular(mod)) {
+    # Simplificar a solo intercepto aleatorio
+    mod <- lmer(
+      `Salud Psicológica` ~ tiempo_num * (Alcohol + Cannabis + 
+                                        Cocaína + `Pasta Base` +
+                                        Riña + `Violencia Intrafamiliar`) + 
+                          (1 | HASHKEY),
+      data = dat_long,
+      REML = FALSE
+    )
+  }
+  mod
+}, error = function(e) {
+  NULL
+})
+
+# Modelo 2: Predictores de calidad de vida
+model_calidad <- lmer(
+  `Calidad de Vida` ~ tiempo_num * (`Salud Psicológica` + `Salud Física` + 
+                                  `Días Trabajo` + `Días Educación`) + 
+                   (1 + tiempo_num | HASHKEY),
+  data = dat_long,
+  REML = FALSE
+)
+
+# Tabla de resultados Modelo 1
+if(!is.null(model_salud_psic)) {
+  # Procesar resultados y traducir nombres
+  tabla_modelo1 <- tidy(model_salud_psic) %>%
+    filter(effect == "fixed") %>%
+    select(-effect, -group) %>%
+    mutate(
+      term = case_when(
+        term == "(Intercept)" ~ "Intercepto",
+        term == "tiempo_num" ~ "Tiempo (meses)",
+        term == "Alcohol" ~ "Alcohol",
+        term == "Cannabis" ~ "Cannabis",
+        term == "Cocaína" ~ "Cocaína",
+        term == "`Pasta Base`" ~ "Pasta Base",
+        term == "Riña" ~ "Riña",
+        term == "`Violencia Intrafamiliar`" ~ "Violencia Intrafamiliar",
+        str_detect(term, "tiempo_num:Alcohol") ~ "Tiempo × Alcohol",
+        str_detect(term, "tiempo_num:Cannabis") ~ "Tiempo × Cannabis",
+        str_detect(term, "tiempo_num:Cocaína") ~ "Tiempo × Cocaína",
+        str_detect(term, "tiempo_num:`Pasta Base`") ~ "Tiempo × Pasta Base",
+        str_detect(term, "tiempo_num:Riña") ~ "Tiempo × Riña",
+        str_detect(term, "tiempo_num:`Violencia") ~ "Tiempo × Violencia Intrafamiliar",
+        TRUE ~ term
+      ),
+      across(where(is.numeric), ~round(., 3))
+    )
+  
+  # Renombrar columnas al español
+  names(tabla_modelo1) <- c("Variable", "Estimación", "Error estándar", 
+                            "Estadístico", "GL", "Valor p")
+  
+  tabla_modelo1 %>%
+    kable(caption = "Modelo: Predictores de salud psicológica") %>%
+    kable_styling(full_width = FALSE)
+}
+
+# Tabla de resultados Modelo 2
+tabla_modelo2 <- tidy(model_calidad) %>%
+  filter(effect == "fixed") %>%
+  select(-effect, -group) %>%
+  mutate(
+    term = case_when(
+      term == "(Intercept)" ~ "Intercepto",
+      term == "tiempo_num" ~ "Tiempo (meses)",
+      term == "`Salud Psicológica`" ~ "Salud Psicológica",
+      term == "`Salud Física`" ~ "Salud Física",
+      term == "`Días Trabajo`" ~ "Días Trabajo",
+      term == "`Días Educación`" ~ "Días Educación",
+      str_detect(term, "tiempo_num:`Salud Psicológica`") ~ "Tiempo × Salud Psicológica",
+      str_detect(term, "tiempo_num:`Salud Física`") ~ "Tiempo × Salud Física",
+      str_detect(term, "tiempo_num:`Días Trabajo`") ~ "Tiempo × Días Trabajo",
+      str_detect(term, "tiempo_num:`Días Educación`") ~ "Tiempo × Días Educación",
+      TRUE ~ term
+    ),
+    across(where(is.numeric), ~round(., 3))
+  )
+
+# Renombrar columnas al español
+names(tabla_modelo2) <- c("Variable", "Estimación", "Error estándar", 
+                          "Estadístico", "GL", "Valor p")
+
+tabla_modelo2 %>%
+  kable(caption = "Modelo: Predictores de calidad de vida") %>%
+  kable_styling(full_width = FALSE)
+```
+
+## Análisis Cross-Lagged
+
+```{r}
+#| label: cross-lagged
+#| fig-cap: Análisis Cross-Lagged Inicio-6m
+
+# Función para correlaciones cross-lagged
+calculate_crosslag <- function(data, stage1, stage2, nodes) {
+  # Identificar pacientes con datos en ambas etapas
+  has_stage1 <- data %>%
+    filter(etapa_std == stage1) %>%
+    select(HASHKEY) %>%
+    distinct() %>%
+    pull(HASHKEY)
+  
+  has_stage2 <- data %>%
+    filter(etapa_std == stage2) %>%
+    select(HASHKEY) %>%
+    distinct() %>%
+    pull(HASHKEY)
+  
+  # Solo pacientes en ambas etapas
+  ids_both <- intersect(has_stage1, has_stage2)
+  
+  if(length(ids_both) < 30) {
+    return(NULL)
+  }
+  
+  # Obtener datos ordenados y alineados
+  d1 <- data %>%
+    filter(HASHKEY %in% ids_both, etapa_std == stage1) %>%
+    group_by(HASHKEY) %>%
+    slice(1) %>%
+    ungroup() %>%
+    arrange(HASHKEY) %>%
+    select(HASHKEY, all_of(nodes))
+  
+  d2 <- data %>%
+    filter(HASHKEY %in% ids_both, etapa_std == stage2) %>%
+    group_by(HASHKEY) %>%
+    slice(1) %>%
+    ungroup() %>%
+    arrange(HASHKEY) %>%
+    select(HASHKEY, all_of(nodes))
+  
+  # Verificar alineación
+  if(!identical(d1$HASHKEY, d2$HASHKEY)) {
+    return(NULL)
+  }
+  
+  # Matriz de correlaciones cruzadas
+  cross_cor <- cor(d1[,-1], d2[,-1], use = "pairwise.complete.obs")
+  
+  # Visualizar como heatmap
+  corrplot(cross_cor, 
+           method = "color",
+           type = "full",
+           tl.cex = 0.7,
+           tl.col = "black",
+           col = colorRampPalette(c("#e74c3c", "white", "#2ecc71"))(100),
+           main = paste("Cross-lagged: Inicio → 6m (n =", nrow(d1), ")"))
+  
+  return(cross_cor)
+}
+
+crosslag_inicio_6m <- calculate_crosslag(dat_analysis, "Inicio", "6m", nodes_all)
+```
+
+```{r}
+#| label: cross-lagged 12m
+#| fig-cap: Análisis Cross-Lagged 6m-12m
+
+crosslag_inicio_9m <- calculate_crosslag(dat_analysis, "6m", "12m", nodes_all)
+```
+
+## Análisis de Tendencias Temporales
+
+```{r}
+#| label: temporal-trends-analysis
+
+temporal_trends <- data.frame(
+  Métrica = c("Densidad", "Clustering global", "Longitud promedio", 
+              "Fuerza global", "Asortatividad", "Grado medio", "Modularidad"),
+  check.names = FALSE
+)
+
+time_numeric <- c(0, 3, 6, 9, 12)
+stages_ordered <- c("Inicio", "3m", "6m", "9m", "12m")
+
+for(metric in temporal_trends$Métrica) {
+  values <- global_metrics_comprehensive %>%
+    filter(Etapa %in% stages_ordered) %>%
+    arrange(match(Etapa, stages_ordered)) %>%
+    pull(!!sym(metric))
+  
+  if(length(values) >= 3) {
+    valid_indices <- which(!is.na(values))
+    if(length(valid_indices) >= 3) {
+      cor_test <- cor.test(time_numeric[valid_indices], values[valid_indices], 
+                           method = "spearman")
+      temporal_trends[temporal_trends$Métrica == metric, "Correlación_Spearman"] <- cor_test$estimate
+      temporal_trends[temporal_trends$Métrica == metric, "p_value"] <- cor_test$p.value
+      
+      lm_model <- lm(values[valid_indices] ~ time_numeric[valid_indices])
+      temporal_trends[temporal_trends$Métrica == metric, "Pendiente"] <- coef(lm_model)[2]
+      temporal_trends[temporal_trends$Métrica == metric, "R2"] <- summary(lm_model)$r.squared
+    }
+  }
+}
+
+temporal_trends %>%
+  mutate(across(where(is.numeric), ~round(., 4))) %>%
+  mutate(Significancia = case_when(
+    p_value < 0.001 ~ "***",
+    p_value < 0.01 ~ "**",
+    p_value < 0.05 ~ "*",
+    TRUE ~ "ns"
+  )) %>%
+  kable(
+    caption = "Análisis de tendencias temporales en métricas de red",
+    format = "html"
+  ) %>%
+  kable_styling(
+    full_width = FALSE,
+    bootstrap_options = c("striped", "hover")
+  ) %>%
+  column_spec(3, color = ifelse(!is.na(temporal_trends$p_value) & 
+                                temporal_trends$p_value < 0.05, "red", "black"))
+```
+
+# Conclusiónes
+
+## Síntesis de Resultados
+
+```{r}
+#| label: synthesis-results
+
+# Evaluar resultados de hipótesis
+h1_result <- if(!is.null(nct_inicio_6m)) {
+  nct_inicio_6m$glstrinv.pval < 0.05
+} else {
+  NA
+}
+
+# Crear resumen de ajuste con modelos nulos
+null_summary <- map_df(names(null_comparisons), function(stage) {
+  comp <- null_comparisons[[stage]]
+  if(is.null(comp)) return(NULL)
+  
+  sig_er <- sum(comp$p_values_er < 0.05)
+  sig_ba <- sum(comp$p_values_ba < 0.05)
+  total_metrics <- length(comp$p_values_er)
+  
+  data.frame(
+    Etapa = stage,
+    `ER Sig/Total` = paste0(sig_er, "/", total_metrics),
+    `ER Ajuste` = case_when(
+      sig_er <= 2 ~ "Bueno",
+      sig_er <= 4 ~ "Moderado",
+      TRUE ~ "Pobre"
+    ),
+    `BA Sig/Total` = paste0(sig_ba, "/", total_metrics),
+    `BA Ajuste` = case_when(
+      sig_ba <= 2 ~ "Bueno",
+      sig_ba <= 4 ~ "Moderado",
+      TRUE ~ "Pobre"
+    ),
+    Conclusión = case_when(
+      sig_er <= 2 & sig_ba <= 2 ~ "Red compatible con procesos aleatorios",
+      sig_er > 4 & sig_ba > 4 ~ "Red con estructura no aleatoria fuerte",
+      TRUE ~ "Red con estructura parcialmente no aleatoria"
+    ),
+    check.names = FALSE
+  )
+})
+
+# Tabla resumen final
+null_summary %>%
+  kable(
+    caption = "Resumen de ajuste con modelos nulos por etapa",
+    format = "html"
+  ) %>%
+  kable_styling(
+    full_width = FALSE,
+    bootstrap_options = c("striped", "hover")
+  ) %>%
+  column_spec(3, color = case_when(
+    null_summary$`ER Ajuste` == "Bueno" ~ "green",
+    null_summary$`ER Ajuste` == "Moderado" ~ "orange",
+    TRUE ~ "red"
+  )) %>%
+  column_spec(5, color = case_when(
+    null_summary$`BA Ajuste` == "Bueno" ~ "green",
+    null_summary$`BA Ajuste` == "Moderado" ~ "orange",
+    TRUE ~ "red"
+  ))
+
+# Síntesis de hallazgos clave
+synthesis <- data.frame(
+  Aspecto = c(
+    "Estructura de red",
+    "Comparación con modelos aleatorios",
+    "Evolución temporal",
+    "Nodos centrales",
+    "Dominios puente"
+  ),
+  `Hallazgo Principal` = c(
+    paste("Densidad promedio:", round(mean(global_metrics_comprehensive$Densidad, na.rm = TRUE), 3)),
+    paste("Etapas con estructura no aleatoria:", sum(null_summary$`ER Ajuste` == "Pobre", na.rm = TRUE)),
+    paste("Métricas con tendencia significativa:", sum(temporal_trends$p_value < 0.05, na.rm = TRUE)),
+    paste("Nodos centrales consistentes:", length(unique(head(node_metrics_all$Nodo[order(node_metrics_all$Fuerza, decreasing = TRUE)], 10)))),
+    paste("Dominio puente principal:", names(which.max(table(bridge_metrics$Comunidad[bridge_metrics$`Influencia puente esperada` > median(bridge_metrics$`Influencia puente esperada`)]))))
+  ),
+  Implicación = c(
+    "Red moderadamente densa con conexiones significativas",
+    "Estructura emergente no explicable por azar",
+    "Cambios sistemáticos durante el tratamiento",
+    "Focos de intervención identificables",
+    "Puntos clave de integración terapéutica"
+  ),
+  check.names = FALSE
+)
+
+synthesis %>%
+  kable(
+    caption = "Síntesis de hallazgos principales del análisis de redes",
+    format = "html"
+  ) %>%
+  kable_styling(
+    full_width = FALSE,
+    bootstrap_options = c("striped", "hover")
+  ) %>%
+  column_spec(2, width = "200px") %>%
+  column_spec(3, width = "300px")
+```

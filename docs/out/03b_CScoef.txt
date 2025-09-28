@@ -1,0 +1,4 @@
+Etapa de referencia: Inicio
+CS-coefficient (strength): 0.75
+Modo: QUICK_TEST
+Bootstrap iterations: 50

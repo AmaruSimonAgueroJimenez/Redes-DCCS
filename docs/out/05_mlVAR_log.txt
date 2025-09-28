@@ -1,0 +1,9 @@
+RUN_MODE: QUICK_TEST
+USE_CACHE: TRUE
+PARALLEL: TRUE (31 cores)
+Sample fraction: 0.2
+Bootstrap iterations: 50
+NCT iterations: 100
+RESTRICT_RICH_PANEL: TRUE
+n sujetos panel: 2012
+n filas panel: 12778
