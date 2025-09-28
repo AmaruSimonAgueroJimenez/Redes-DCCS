@@ -9,6 +9,7 @@ lang: es
 format:
   html:
     smooth-scroll: true
+    code-tools: true
     toc: true
     toc-depth: 6
     toc-location: right
@@ -68,7 +69,8 @@ Evaluar redes de interacciones entre síntomas y factores psicosociales registra
 
 ## Descripción de los datos
 
-Este es un estudio de cohorte retrospectiva de pacientes adultos en tratamiento por consumo de sustancias, con datos otorgados por el Servicio Nacional para la Prevención y Rehabilitación del Consumo de Drogas y Alcohol de Chile (SENDA) en convenio con el núcleo milenio de ánalisis de políticas públicas de drogas (nDP). La cohorte se construyó vinculando los registros administrativos de los pacientes con TOP (n = 223,061 episodios de tratamiento entre 97,698 personas en las 16 regiones del país).
+Este es un estudio de cohorte retrospectiva de pacientes adultos en tratamiento por consumo de sustancias desde el 2018 al 2022, con datos otorgados por el Servicio Nacional para la Prevención y Rehabilitación del Consumo de Drogas y Alcohol de Chile (SENDA) en convenio con el núcleo milenio de ánalisis de políticas públicas de drogas (nDP). La cohorte se construyó vinculando los registros administrativos de los pacientes con TOP (n = 167,404 episodios de tratamiento entre 56,998
+personas en las 16 regiones del país).
 
 Estos datos incluyen múltiples variables relacionadas al consumo y tratamiento rehabilitador de drogas. Entre estas variables esta la *sustancia principal*  por la cual se trató al paciente y sustancias secundarias (alcohol, pasta base de cocaína, cocaína, marihuana, depresores del SNC u otras sustancias. Tambien está presente el número de reingresos a tratamiento (retratamientos, categorizados en 0, 1, 2, 3 o más reingresos), el *tipo de plan de tratamiento* (ambulatorio vs. residencial) y el historial clínico de salud mental de los pacientes.
 
@@ -846,7 +848,13 @@ if (file.exists(output_rds)) {
 
 # Resultados
 
-## Configuración de Funciones Auxiliares
+Se estimó, para cada etapa del tratamiento (Inicio, 3 m, 6 m, 9 m, 12 m), una red de asociación condicional mediante EBICglasso. Se observó que el número de nodos se mantuvo constante en 16 mientras que el número de aristas decreció de 69 al inicio a 32 a los 12 meses, lo que se tradujo en una reducción de la densidad de la red desde $\rho=0{,}575$ hasta $\rho=0{,}267$, con $\rho$ definida por
+
+$$
+\rho \;=\; \frac{2E}{N(N-1)}\,.
+$$
+De forma paralela, la longitud promedio de camino aumentó de $1{,}44$ a $2{,}07$ y el diámetro pasó de 3 a 4, evidenciando rutas más largas entre ítems. El clustering global mostró un leve descenso con la progresión del tratamiento, mientras que la modularidad tendió a aumentar, sugiriendo una organización más comunitaria y menos densa. La varianza del grado y de la fuerza disminuyeron en el tiempo y la asortatividad cambió de negativa (–0,248) al inicio a positiva (0,310) a los 12 meses, lo que es consistente con una reconfiguración hacia patrones de conexión más homogéneos. En conjunto, la red inicial aparece más densamente conectada y cercana a un patrón de “pequeño mundo”, en tanto que las redes de etapas posteriores se hacen más dispersas y modulares. La distribución muestral acompañó estas tendencias: la mayoría de las observaciones se concentró al inicio (73 430) y descendió a 8 726 hacia los 12 meses, lo que puede afectar la estabilidad de ciertas estimaciones en etapas tardías.
+
 
 ```{r}
 #| label: helper-functions
@@ -1569,6 +1577,9 @@ wrap_plots(plot_list, ncol = 3) +
 
 ## Evolución de Métricas con Intervalos de Confianza
 
+El análisis temporal con bandas de confianza al 95 % corroboró una disminución sostenida de la densidad y un ligero descenso del clustering global, a la vez que la longitud promedio de camino aumentó de manera significativa. Las medidas de centralidad, en particular, fuerza e intermediación, mostraron descensos a través de las etapas, lo que sugiere que la influencia relativa de los nodos se distribuye de forma más uniforme. Estas trayectorias son coherentes con las métricas globales: conforme avanza el tratamiento, la red pierde enlaces y se vuelve más elongada y segmentada.
+
+
 ```{r}
 #| label: metrics-evolution-ci
 #| fig-height: 10
@@ -1634,6 +1645,8 @@ p3 <- temporal_data_ci %>%
 
 ## Comparación con Modelos Nulos
 
+La comparación con modelos aleatorios de Erdős–Rényi (ER) y Barabási–Albert (BA) indicó que, en la etapa inicial, el clustering observado fue superior al esperado por ER (aprox. $z\!\approx\!2$, $p\!\approx\!0{,}049$) y marcadamente superior al de BA ($z\!\approx\!7{,}88$, $p\!<\!0{,}001$). La varianza del grado también excedió lo esperable bajo ER ($z\!\approx\!4{,}54$, $p\!<\!0{,}001$). Si bien a lo largo del tratamiento la mayoría de las métricas continuó diferenciándose de los modelos nulos, en las etapas de 9 y 12 meses algunas medidas dejaron de ser significativas. En términos generales, las redes tempranas exhibieron estructura no aleatoria compatible con propiedades de “pequeño mundo”, en tanto que en etapas tardías la organización se acercó más a patrones aleatorios en varios indicadores.
+
 ```{r}
 #| label: table-null-comparison-all
 
@@ -1669,6 +1682,8 @@ null_comparison_df %>%
 ```
 
 ## Análisis de Nodos Puente
+
+El estudio de puentes interdominios mostró que, en la etapa inicial, **Venta de Drogas**, **Cannabis**, **Riña**, **Hurto** y **Pasta Base** concentraron la mayor influencia puente. A los 3 meses destacaron **Días Trabajo**, **Cannabis**, **Pasta Base**, **Venta de Drogas** y **Riña**; en 6 y 9 meses sobresalieron **Pasta Base**, **Cannabis**, **Hurto**, **Riña** y **Días Trabajo**; y a los 12 meses lo hicieron **Riña**, **Hurto**, **Benzodiacepinas**, **Violencia Intrafamiliar** y **Pasta Base**. Predominaron nodos de los dominios de transgresión y uso de sustancias, actuando como conectores entre las subredes de salud, funcionamiento y consumo. La recurrencia de **Pasta Base**, **Cannabis** y **Riña** sugiere blancos prioritarios para intervención.
 
 ```{r}
 #| label: bridge-analysis-enhanced
@@ -1709,6 +1724,8 @@ bridge_metrics %>%
 ```
 
 ## Redes de Cambio
+
+Se estimaron redes de cambio (deltas apareados) para las transiciones Inicio→3m, 3m→6m y 6m→12 m con muestras pareadas de 37,111, 22,583 y 8,193 pacientes, respectivamente. Estas redes capturan incrementos o decrementos conjuntos entre ítems, de modo que sus aristas reflejan co-variaciones de cambio más que estados absolutos. En términos cualitativos, se observó una reducción de vínculos entre ítems de uso y transgresión y un incremento relativo de conexiones vinculadas al dominio de funcionamiento.
 
 ```{r}
 #| label: change-networks
@@ -1948,6 +1965,8 @@ if(!is.null(trans)) {
 
 ## Comparación de Redes (NCT)
 
+La prueba de comparación de redes mostró diferencias estadísticamente significativas tanto en la fuerza global como en la estructura entre la red inicial y las redes de seguimiento. La comparación Inicio vs 6 meses arrojó una diferencia de fuerza global de 0,591 ($p=0{,}002$) y de estructura de 0,082 ($p=0{,}002$); y la comparación Inicio vs 12 meses, de 0,829 ($p=0{,}002$) en fuerza y 0,262 ($p=0{,}002$) en estructura. Estas evidencias confirman que, además de perder enlaces, la red reorganiza su arquitectura a medida que progresa el tratamiento.
+
 ```{r}
 #| label: nct-analysis-enhanced
 #| message: false
@@ -2028,6 +2047,9 @@ if(nrow(nct_results) > 0) {
 ```
 
 ## Modelos Mixtos Lineales
+
+El **Modelo 1** (resultado: salud psicológica) indicó un intercepto inicial alto (12,262) y un efecto positivo del tiempo (0,326), consistente con mejorías a lo largo del seguimiento. El consumo de alcohol, cannabis, cocaína y pasta base, así como la participación en riñas y la violencia intrafamiliar, se asociaron negativamente con la salud psicológica; las interacciones con el tiempo fueron negativas y de menor magnitud, sugiriendo que el impacto adverso de estos factores tiende a atenuarse. El **Modelo 2** (resultado: calidad de vida) mostró asociaciones positivas de la calidad de vida con salud psicológica y física, y con los días de trabajo y educación. El tiempo tuvo un efecto ligeramente negativo (–0,017), mientras que las interacciones tiempo×salud fueron positivas y las interacciones tiempo×participación (trabajo/educación) resultaron negativas pero pequeñas. En conjunto, los modelos respaldan que mejorar salud y participación social se traduce en mejor calidad de vida durante la rehabilitación, con rendimientos marginales que pueden variar con el tiempo.
+
 
 ```{r}
 #| label: mixed-models
@@ -2146,6 +2168,8 @@ tabla_modelo2 %>%
 
 ## Análisis Cross-Lagged
 
+Las correlaciones cruzadas entre etapas consecutivas sugirieron persistencia de asociaciones entre indicadores de uso/transgresión y desenlaces de salud/funcionamiento. De manera ilustrativa, niveles altos de **Pasta Base** al inicio tendieron a relacionarse con problemas de transgresión posteriores, mientras que mejoras en **Días Trabajo** precedieron mejoras en la salud psicológica. Este enfoque complementa a los modelos mixtos al explorar direccionalidad potencial, más allá de la asociación contemporánea.
+
 ```{r}
 #| label: cross-lagged
 #| fig-cap: Análisis Cross-Lagged Inicio-6m
@@ -2221,6 +2245,9 @@ crosslag_inicio_9m <- calculate_crosslag(dat_analysis, "6m", "12m", nodes_all)
 
 ## Análisis de Tendencias Temporales
 
+El análisis de correlación de Spearman con el tiempo en meses ($0,3,6,9,12$) mostró tendencias marcadas: la densidad presentó $\rho_S=-1{,}0$ con $p=0{,}0167$ y pendiente $-0{,}0244$; la longitud promedio de camino, $\rho_S=1{,}0$ con $p=0{,}0167$ y pendiente $+0{,}0552$; el grado medio, pendiente $-0{,}3667$ con evidencia de cambio significativo; y la modularidad, pendiente $+0{,}0131$ también significativa. El clustering global, la fuerza global y la asortatividad no evidenciaron cambios significativos. Convergentemente, las redes se vuelven más dispersas (menos enlaces), más elongadas (mayores distancias) y más modulares (segmentación en comunidades) conforme avanza el tratamiento.
+
+
 ```{r}
 #| label: temporal-trends-analysis
 
@@ -2275,6 +2302,8 @@ temporal_trends %>%
 ```
 
 # Conclusiónes
+
+Los resultados muestran que la red TOP se simplifica y se segmenta a lo largo del tratamiento: disminuyen la densidad y el grado medio, aumenta la distancia típica entre ítems y crece la modularidad. La comparación de redes confirmó cambios sustantivos tanto en intensidad total como en arquitectura, con divergencias más amplias a 12 meses. Los nodos puente, en particular **Pasta Base**, **Cannabis** y **Riña**, junto con **Días Trabajo** en fases tempranas, articulan la conectividad interdominios y representan puntos de palanca para intervención. Los modelos longitudinales respaldan que reducir conductas de consumo y transgresión mientras se fortalecen salud física y psicológica y la participación laboral/educativa se asocia a mejor calidad de vida, con efectos que pueden variar temporalmente. Finalmente, algunas métricas se aproximan a patrones aleatorios en etapas tardías, lo que podría reflejar mayor heterogeneidad y menor acoplamiento entre dominios tras la intervención, reforzando la necesidad de intervenciones tempranas y focalizadas sobre los nodos puente identificados.
 
 ## Síntesis de Resultados
 
